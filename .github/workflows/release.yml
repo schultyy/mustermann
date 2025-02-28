@@ -17,13 +17,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
       - name: Get next release number
         id: get_next_release
         run: |
@@ -33,9 +26,11 @@ jobs:
           next_num=$((latest_num + 1))
           echo "next_release=v$next_num" >> $GITHUB_OUTPUT
 
-      - name: Build release
+      - name: Get binary name from Cargo.toml
+        id: get_binary_name
         run: |
-          cargo build --release
+          binary_name=$(grep -m 1 "name" Cargo.toml | cut -d '"' -f 2)
+          echo "binary_name=$binary_name" >> $GITHUB_OUTPUT
 
       - name: Create Release
         id: create_release
@@ -49,18 +44,95 @@ jobs:
           draft: false
           prerelease: false
 
+  build-and-upload:
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-amd64
+            binary_extension: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-intel
+            binary_extension: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm
+            binary_extension: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-amd64
+            binary_extension: ".exe"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Get release info
+        id: get_release_info
+        uses: actions/github-script@v6
+        env:
+          TAG_NAME: ${{ needs.release.outputs.next_release }}
+        with:
+          github-token: ${{ secrets.RELEASE_TOKEN }}
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+            const latestRelease = releases.data[0];
+            return {
+              upload_url: latestRelease.upload_url,
+              tag_name: latestRelease.tag_name
+            };
+          result-encoding: string
+
+      - name: Parse release info
+        id: parse_release_info
+        run: |
+          content='${{ steps.get_release_info.outputs.result }}'
+          # Extract upload_url using different methods based on OS
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            upload_url=$(echo "$content" | jq -r '.upload_url')
+            tag_name=$(echo "$content" | jq -r '.tag_name')
+          else
+            upload_url=$(echo "$content" | grep -o '"upload_url":"[^"]*' | cut -d'"' -f4)
+            tag_name=$(echo "$content" | grep -o '"tag_name":"[^"]*' | cut -d'"' -f4)
+          fi
+          echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
+          echo "tag_name=$tag_name" >> $GITHUB_OUTPUT
+        shell: bash
+
       - name: Get binary name from Cargo.toml
         id: get_binary_name
         run: |
           binary_name=$(grep -m 1 "name" Cargo.toml | cut -d '"' -f 2)
           echo "binary_name=$binary_name" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Build release
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }}
 
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./target/release/${{ steps.get_binary_name.outputs.binary_name }}
-          asset_name: ${{ steps.get_binary_name.outputs.binary_name }}-${{ steps.get_next_release.outputs.next_release }}-linux-x86_64
+          upload_url: ${{ steps.parse_release_info.outputs.upload_url }}
+          asset_path: ./target/${{ matrix.target }}/release/${{ steps.get_binary_name.outputs.binary_name }}${{ matrix.binary_extension }}
+          asset_name: ${{ steps.get_binary_name.outputs.binary_name }}-${{ steps.parse_release_info.outputs.tag_name }}-${{ matrix.name }}${{ matrix.binary_extension }}
           asset_content_type: application/octet-stream

@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Get next release number
         id: get_next_release
@@ -54,6 +55,9 @@ jobs:
           # Commit the version change
           git add Cargo.toml
           git commit -m "Bump version to $version_number for release"
+
+          # Use RELEASE_TOKEN for push
+          git remote set-url origin https://x-access-token:${{ secrets.RELEASE_TOKEN }}@github.com/${{ github.repository }}
           git push
 
       - name: Get binary name from Cargo.toml
@@ -83,6 +87,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: main # Ensure we have the latest commit with version update
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -131,6 +136,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: main # Ensure we have the latest commit with version update
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1

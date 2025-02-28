@@ -42,6 +42,20 @@ Set a custom log level via `RUST_LOG` (works for stdout and OTLP):
 RUST_LOG=DEBUG cargo run -- --log stdout
 ```
 
+### Tracing
+
+Tracing to an OTLP backend (default endpoint is `http://localhost:4317`):
+
+```bash
+cargo run -- --tracing
+```
+
+Tracing to a custom OTLP endpoint:
+
+```bash
+cargo run -- --tracing --otlp-endpoint http://other-host:4317
+```
+
 ## License
 
 MIT

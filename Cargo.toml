@@ -17,3 +17,4 @@ opentelemetry-appender-tracing = "0.27"
 opentelemetry-stdout = "0.27.0"
 tokio = { version = "1.43.0", features = ["full"] }
 rand = "0.9.0"
+ctrlc = "3.4"

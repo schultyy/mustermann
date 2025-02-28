@@ -1,6 +1,7 @@
 use clap::{Parser, ValueEnum};
 use fake::{locales::EN, Fake};
 
+use ctrlc;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::{self, logs::LoggerProvider, runtime};
@@ -52,7 +53,7 @@ fn setup_otlp_logger(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::filter::EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer())
+        .with(layer)
         .init();
     Ok(())
 }
@@ -60,13 +61,31 @@ fn setup_otlp_logger(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn log_demo_data() {
     let mut rng = rand::rng();
 
+    // Create a channel to listen for Ctrl+C
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    // Set up Ctrl+C handler
+    ctrlc::set_handler(move || {
+        tx.send(()).expect("Could not send signal on channel");
+    })
+    .expect("Error setting Ctrl-C handler");
+
     loop {
+        // Check if Ctrl+C was pressed
+        if rx.try_recv().is_ok() {
+            info!("Received interrupt signal, shutting down");
+            break;
+        }
+
         let name: String = fake::faker::name::raw::Name(EN).fake();
         if rng.random_bool(0.5) {
             info!("Looking up user: {}", name);
         } else {
             error!("User lookup for name failed: {}", name);
         }
+
+        // Add a small delay to prevent CPU hogging
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 

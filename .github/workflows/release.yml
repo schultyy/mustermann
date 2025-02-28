@@ -43,10 +43,13 @@ jobs:
           version="${{ steps.get_next_release.outputs.next_release }}"
           version_number="${version#v}"
 
-          # Update version in Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"$version_number\"/" Cargo.toml
+          # Format as proper semantic version x.0.0
+          semver_version="$version_number.0.0"
 
-          echo "version=$version_number" >> $GITHUB_OUTPUT
+          # Update version in Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"$semver_version\"/" Cargo.toml
+
+          echo "version=$semver_version" >> $GITHUB_OUTPUT
 
           # Configure git for commit
           git config --local user.email "action@github.com"
@@ -54,7 +57,7 @@ jobs:
 
           # Commit the version change
           git add Cargo.toml
-          git commit -m "Bump version to $version_number for release"
+          git commit -m "Bump version to $semver_version for release"
 
           # Use RELEASE_TOKEN for push
           git remote set-url origin https://x-access-token:${{ secrets.RELEASE_TOKEN }}@github.com/${{ github.repository }}

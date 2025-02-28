@@ -6,6 +6,14 @@
 
 Mustermann is a CLI tool to generate random data to test OpenTelemetry pipelines .
 
+## Installation
+
+```bash
+cargo install mustermann
+```
+
+Or install it from the [releases page](https://github.com/schultyy/mustermann/releases).
+
 ## Usage
 
 ### Logging

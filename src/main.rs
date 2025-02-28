@@ -1,16 +1,15 @@
 use clap::{Parser, ValueEnum};
-use fake::{locales::EN, Fake};
 
-use ctrlc;
+use logger::log_demo_data;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::{self, logs::LoggerProvider, runtime};
-use rand::Rng;
 use tonic::metadata::MetadataMap;
-use tracing::{debug, error, info, Level};
+use tracing::{debug, info, Level};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
 
+mod logger;
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -58,37 +57,6 @@ fn setup_otlp_logger(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn log_demo_data() {
-    let mut rng = rand::rng();
-
-    // Create a channel to listen for Ctrl+C
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    // Set up Ctrl+C handler
-    ctrlc::set_handler(move || {
-        tx.send(()).expect("Could not send signal on channel");
-    })
-    .expect("Error setting Ctrl-C handler");
-
-    loop {
-        // Check if Ctrl+C was pressed
-        if rx.try_recv().is_ok() {
-            info!("Received interrupt signal, shutting down");
-            break;
-        }
-
-        let name: String = fake::faker::name::raw::Name(EN).fake();
-        if rng.random_bool(0.5) {
-            info!("Looking up user: {}", name);
-        } else {
-            error!("User lookup for name failed: {}", name);
-        }
-
-        // Add a small delay to prevent CPU hogging
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
@@ -121,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.metrics {
-        info!("Metrics collection enabled");
+        info!("Metrics will come soon :rocket:");
         // Stub for metrics implementation
     }
 

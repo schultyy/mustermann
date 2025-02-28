@@ -739,6 +739,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-stdout",
  "opentelemetry_sdk",
+ "rand 0.9.0",
  "tokio",
  "tonic",
  "tracing",

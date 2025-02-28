@@ -3,21 +3,12 @@ use fake::{locales::EN, Fake};
 
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig};
-use opentelemetry_sdk::{
-    self,
-    logs::{BatchConfig, BatchLogProcessor, LoggerProvider},
-    runtime,
-    trace::{self, RandomIdGenerator, Sampler, TracerProvider},
-    Resource,
-};
-use tokio::{
-    sync::broadcast::{self, Receiver, Sender},
-    task,
-};
+use opentelemetry_sdk::{self, logs::LoggerProvider, runtime};
+use rand::Rng;
 use tonic::metadata::MetadataMap;
 use tracing::{debug, error, info, Level};
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{layer::SubscriberExt, Registry};
 
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
@@ -64,9 +55,7 @@ fn setup_otlp_logger(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     let layer = OpenTelemetryTracingBridge::new(&logger_provider);
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::filter::LevelFilter::from_level(
-            Level::ERROR,
-        ))
+        .with(tracing_subscriber::filter::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
         .with(layer)
         .init();
@@ -74,9 +63,15 @@ fn setup_otlp_logger(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn log_demo_data() {
+    let mut rng = rand::rng();
+
     loop {
         let name: String = fake::faker::name::raw::Name(EN).fake();
-        info!("Looking up user: {}", name);
+        if rng.random_bool(0.5) {
+            info!("Looking up user: {}", name);
+        } else {
+            error!("User lookup for name failed: {}", name);
+        }
     }
 }
 

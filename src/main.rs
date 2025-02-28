@@ -1,4 +1,5 @@
 use clap::{Parser, ValueEnum};
+use fake::{locales::EN, Fake};
 use tracing::{info, debug, Level};
 
 /// CLI tool for pattern matching
@@ -86,7 +87,8 @@ fn main() {
         
         // Demo log data
         loop {
-            info!("Demo log entry");
+            let name : String = fake::faker::name::raw::Name(EN).fake();
+            info!("Looking up user: {}", name);
         }
     }
     

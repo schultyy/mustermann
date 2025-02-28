@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  mustermann:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      [
+        "--log",
+        "otlp",
+        "--otlp-endpoint",
+        "http://opentelemetry-collector:4317",
+      ]
+
+  opentelemetry-collector:
+    image: otel/opentelemetry-collector:latest
+    # command: ["--config", "/otel-config.yaml"]
+    volumes:
+      - "./otel-config.yaml:/etc/otelcol-contrib/config.yaml"
+    ports:
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+      - "8889:8889" # Prometheus metrics endpoint
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+    ports:
+      - "9090:9090"
+
+  jaeger:
+    image: jaegertracing/jaeger:2.3.0
+    ports:
+      - "16686:16686"
+      - "43017:4317"
+      - "43018:4318"
+      - "5778:5778"
+      - "9411:9411"

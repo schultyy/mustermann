@@ -27,3 +27,21 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
+
+      - name: Check if should release
+        id: check_release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "should_release=true" >> $GITHUB_OUTPUT
+
+  trigger-release:
+    needs: build
+    if: needs.build.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger release workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: Release
+          token: ${{ secrets.RELEASE_TOKEN }}
+          inputs: '{"publish_to_crates_io": true, "release_notes": "Automated release after successful CI build"}'

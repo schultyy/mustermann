@@ -7,6 +7,11 @@ on:
         description: "Release notes"
         required: false
         default: "New release"
+      publish_to_crates_io:
+        description: "Publish to crates.io"
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   release:
@@ -14,6 +19,7 @@ jobs:
     outputs:
       release_tag: ${{ steps.get_next_release.outputs.next_release }}
       upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.update_version.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -28,6 +34,27 @@ jobs:
           latest_num=${latest_tag#v}
           next_num=$((latest_num + 1))
           echo "next_release=v$next_num" >> $GITHUB_OUTPUT
+
+      - name: Update version in Cargo.toml
+        id: update_version
+        run: |
+          # Extract version without 'v' prefix for semantic versioning
+          version="${{ steps.get_next_release.outputs.next_release }}"
+          version_number="${version#v}"
+
+          # Update version in Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"$version_number\"/" Cargo.toml
+
+          echo "version=$version_number" >> $GITHUB_OUTPUT
+
+          # Configure git for commit
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # Commit the version change
+          git add Cargo.toml
+          git commit -m "Bump version to $version_number for release"
+          git push
 
       - name: Get binary name from Cargo.toml
         id: get_binary_name
@@ -46,6 +73,35 @@ jobs:
           body: ${{ github.event.inputs.release_notes }}
           draft: false
           prerelease: false
+
+  publish-to-crates-io:
+    needs: release
+    if: ${{ github.event.inputs.publish_to_crates_io == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: main # Ensure we have the latest commit with version update
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Login to crates.io
+        uses: actions-rs/cargo@v1
+        with:
+          command: login
+          args: ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Publish to crates.io
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --allow-dirty
 
   build-and-upload:
     needs: release
@@ -73,6 +129,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          ref: main # Ensure we have the latest commit with version update
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1

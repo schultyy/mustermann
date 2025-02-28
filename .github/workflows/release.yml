@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: "Release notes"
+        required: false
+        default: "New release"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Get next release number
+        id: get_next_release
+        run: |
+          # Get the latest tag or start with 0 if no tags exist
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0")
+          latest_num=${latest_tag#v}
+          next_num=$((latest_num + 1))
+          echo "next_release=v$next_num" >> $GITHUB_OUTPUT
+
+      - name: Build release
+        run: |
+          cargo build --release
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_next_release.outputs.next_release }}
+          release_name: Release ${{ steps.get_next_release.outputs.next_release }}
+          body: ${{ github.event.inputs.release_notes }}
+          draft: false
+          prerelease: false
+
+      - name: Get binary name from Cargo.toml
+        id: get_binary_name
+        run: |
+          binary_name=$(grep -m 1 "name" Cargo.toml | cut -d '"' -f 2)
+          echo "binary_name=$binary_name" >> $GITHUB_OUTPUT
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./target/release/${{ steps.get_binary_name.outputs.binary_name }}
+          asset_name: ${{ steps.get_binary_name.outputs.binary_name }}-${{ steps.get_next_release.outputs.next_release }}-linux-x86_64
+          asset_content_type: application/octet-stream

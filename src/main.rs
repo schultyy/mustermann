@@ -115,9 +115,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Log startup information
-    info!("Starting application");
-
     // Log feature activation status
     if let Some(log_output) = &args.log {
         info!("Logging enabled with {:?} output", log_output);
@@ -142,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else if args.log == Some(LogOutput::Otlp) {
         log_demo_data()
     } else {
-        error!("No CLI arguments provided");
+        eprintln!("No CLI arguments provided");
     }
 
     Ok(())

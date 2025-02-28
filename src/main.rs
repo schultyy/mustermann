@@ -1,11 +1,31 @@
 use clap::{Parser, ValueEnum};
 use fake::{locales::EN, Fake};
-use tracing::{info, debug, Level};
+
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig};
+use opentelemetry_sdk::{
+    self,
+    logs::{BatchConfig, BatchLogProcessor, LoggerProvider},
+    runtime,
+    trace::{self, RandomIdGenerator, Sampler, TracerProvider},
+    Resource,
+};
+use tokio::{
+    sync::broadcast::{self, Receiver, Sender},
+    task,
+};
+use tonic::metadata::MetadataMap;
+use tracing::{debug, error, info, Level};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{layer::SubscriberExt, Registry};
 
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// OTLP endpoint URL when using OTLP logging
+    #[arg(short, long, default_value = "http://localhost:4317")]
+    otlp_endpoint: String,
     /// Enable logging and specify the output destination
     #[arg(long, value_enum)]
     log: Option<LogOutput>,
@@ -32,66 +52,92 @@ enum LogOutput {
     Otlp,
 }
 
-fn main() {
+fn setup_otlp_logger(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let exporter = LogExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .with_metadata(MetadataMap::new())
+        .build()?;
+    let logger_provider = LoggerProvider::builder()
+        .with_batch_exporter(exporter, runtime::Tokio)
+        .build();
+    let layer = OpenTelemetryTracingBridge::new(&logger_provider);
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::LevelFilter::from_level(
+            Level::ERROR,
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .with(layer)
+        .init();
+    Ok(())
+}
+
+fn log_demo_data() {
+    loop {
+        let name: String = fake::faker::name::raw::Name(EN).fake();
+        info!("Looking up user: {}", name);
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
 
     // Initialize tracing subscriber with level based on verbose flag
-    let log_level = if args.verbose { Level::DEBUG } else { Level::INFO };
-    
+    let log_level = if args.verbose {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
+
     // Configure logging based on the selected output
     match args.log {
         Some(LogOutput::Stdout) => {
-            tracing_subscriber::fmt()
-                .with_max_level(log_level)
-                .init();
+            tracing_subscriber::fmt().with_max_level(log_level).init();
             info!("Logging initialized with stdout output");
         }
         Some(LogOutput::Otlp) => {
             // This is a stub for now
-            tracing_subscriber::fmt()
-                .with_max_level(log_level)
-                .init();
-            info!("OTLP logging would be initialized here (stub)");
+            setup_otlp_logger(&args.otlp_endpoint)?;
+            info!("OTLP initialized");
         }
         None => {
             // Initialize minimal logging for internal use
-            tracing_subscriber::fmt()
-                .with_max_level(Level::WARN)
-                .init();
+            tracing_subscriber::fmt().with_max_level(Level::WARN).init();
         }
     }
 
     // Log startup information
     info!("Starting application");
-    
+
     // Log feature activation status
     if let Some(log_output) = &args.log {
         info!("Logging enabled with {:?} output", log_output);
     }
-    
+
     if args.metrics {
         info!("Metrics collection enabled");
         // Stub for metrics implementation
     }
-    
+
     if args.tracing {
         info!("Tracing enabled");
         // Stub for tracing implementation
     }
-    
+
     // Generate some demo log data if stdout logging is enabled
     if args.log == Some(LogOutput::Stdout) {
         debug!("This is a debug message (only visible with --verbose)");
         info!("This is an info message");
-        
-        // Demo log data
-        loop {
-            let name : String = fake::faker::name::raw::Name(EN).fake();
-            info!("Looking up user: {}", name);
-        }
+
+        log_demo_data()
+    } else if args.log == Some(LogOutput::Otlp) {
+        log_demo_data()
+    } else {
+        error!("No CLI arguments provided");
     }
-    
-    println!("Hello, world!");
-    info!("Application finished");
+
+    Ok(())
 }

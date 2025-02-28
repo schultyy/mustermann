@@ -11,6 +11,9 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.get_next_release.outputs.next_release }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -79,41 +82,6 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      - name: Get release info
-        id: get_release_info
-        uses: actions/github-script@v6
-        env:
-          TAG_NAME: ${{ needs.release.outputs.next_release }}
-        with:
-          github-token: ${{ secrets.RELEASE_TOKEN }}
-          script: |
-            const releases = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo
-            });
-            const latestRelease = releases.data[0];
-            return {
-              upload_url: latestRelease.upload_url,
-              tag_name: latestRelease.tag_name
-            };
-          result-encoding: string
-
-      - name: Parse release info
-        id: parse_release_info
-        run: |
-          content='${{ steps.get_release_info.outputs.result }}'
-          # Extract upload_url using different methods based on OS
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            upload_url=$(echo "$content" | jq -r '.upload_url')
-            tag_name=$(echo "$content" | jq -r '.tag_name')
-          else
-            upload_url=$(echo "$content" | grep -o '"upload_url":"[^"]*' | cut -d'"' -f4)
-            tag_name=$(echo "$content" | grep -o '"tag_name":"[^"]*' | cut -d'"' -f4)
-          fi
-          echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
-          echo "tag_name=$tag_name" >> $GITHUB_OUTPUT
-        shell: bash
-
       - name: Get binary name from Cargo.toml
         id: get_binary_name
         run: |
@@ -132,7 +100,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         with:
-          upload_url: ${{ steps.parse_release_info.outputs.upload_url }}
+          upload_url: ${{ needs.release.outputs.upload_url }}
           asset_path: ./target/${{ matrix.target }}/release/${{ steps.get_binary_name.outputs.binary_name }}${{ matrix.binary_extension }}
-          asset_name: ${{ steps.get_binary_name.outputs.binary_name }}-${{ steps.parse_release_info.outputs.tag_name }}-${{ matrix.name }}${{ matrix.binary_extension }}
+          asset_name: ${{ steps.get_binary_name.outputs.binary_name }}-${{ needs.release.outputs.release_tag }}-${{ matrix.name }}${{ matrix.binary_extension }}
           asset_content_type: application/octet-stream

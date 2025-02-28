@@ -24,6 +24,12 @@ Logging to a custom OTLP endpoint:
 cargo run -- --log otlp --otlp-endpoint http://other-host:4317
 ```
 
+Set a custom log level via `RUST_LOG` (works for stdout and OTLP):
+
+```bash
+RUST_LOG=DEBUG cargo run -- --log stdout
+```
+
 ## License
 
 MIT

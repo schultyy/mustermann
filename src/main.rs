@@ -28,10 +28,6 @@ struct Args {
     /// Enable tracing
     #[arg(long, default_value_t = false)]
     tracing: bool,
-
-    /// Enable verbose output
-    #[arg(short, long, default_value_t = false)]
-    verbose: bool,
 }
 
 /// Logging output destinations
@@ -57,7 +53,6 @@ fn setup_otlp_logger(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::filter::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
-        .with(layer)
         .init();
     Ok(())
 }
@@ -80,17 +75,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
 
-    // Initialize tracing subscriber with level based on verbose flag
-    let log_level = if args.verbose {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-
     // Configure logging based on the selected output
     match args.log {
         Some(LogOutput::Stdout) => {
-            tracing_subscriber::fmt().with_max_level(log_level).init();
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+                .with(tracing_subscriber::fmt::layer())
+                .init();
+
             info!("Logging initialized with stdout output");
         }
         Some(LogOutput::Otlp) => {

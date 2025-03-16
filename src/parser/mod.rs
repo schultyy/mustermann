@@ -138,6 +138,7 @@ pub struct Muster {
 }
 
 pub mod parser {
+    #![allow(unused_assignments)]
     use super::*;
     use nom::{
         branch::alt,
@@ -669,7 +670,6 @@ pub mod parser {
             let (i, _) = ws(char('}'))(remaining)?;
             let (i, _) = opt(ws(char(',')))(i)?;
             remaining_input = i;
-
             patterns = Some(pattern_map);
         }
 

@@ -1,12 +1,6 @@
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig};
-use opentelemetry_sdk::{
-    self,
-    logs::LoggerProvider,
-    runtime,
-    trace::{self, RandomIdGenerator},
-    Resource,
-};
+use opentelemetry_sdk::{logs::LoggerProvider, runtime, trace::RandomIdGenerator, Resource};
 use tonic::metadata::{MetadataMap, MetadataValue};
 use tracing::Level;
 use tracing_opentelemetry::OpenTelemetryLayer;
@@ -51,18 +45,14 @@ pub fn setup_tracer(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Then pass it into provider builder
     let provider = opentelemetry_sdk::trace::TracerProvider::builder()
         .with_batch_exporter(otlp_exporter, opentelemetry_sdk::runtime::Tokio)
-        .with_config(
-            trace::Config::default()
-                // .with_sampler(Sampler::AlwaysOn)
-                .with_id_generator(RandomIdGenerator::default())
-                .with_max_events_per_span(64)
-                .with_max_attributes_per_span(16)
-                .with_max_events_per_span(16)
-                .with_resource(Resource::new(vec![KeyValue::new(
-                    "service.name",
-                    "mustermann",
-                )])),
-        )
+        .with_id_generator(RandomIdGenerator::default())
+        .with_max_events_per_span(64)
+        .with_max_attributes_per_span(16)
+        .with_max_events_per_span(16)
+        .with_resource(Resource::new(vec![KeyValue::new(
+            "service.name",
+            "mustermann",
+        )]))
         .build();
     let tracer = provider.tracer("mustermann_root_tracer");
     tracing_subscriber::registry()

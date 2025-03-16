@@ -1,8 +1,12 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, PartialEq)]
 #[repr(u32)]
 pub enum Instruction {
     PushStr(String) = 10,
     PushInt(i64) = 11,
+    Store(String, Value) = 12,
+    Load(String) = 13,
     PrintStdout = 20,
     PrintStderr = 21,
     Sleep(u64) = 30,
@@ -11,110 +15,150 @@ pub enum Instruction {
     End = 50,
 }
 
-pub enum StackValue {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
     String(String),
     Int(i64),
 }
 
-pub struct VM {
-    program: Vec<Instruction>,
-    stdout: Option<Box<dyn Fn(&str) -> Result<(), std::io::Error>>>, //callback function for stdout
-    stderr: Option<Box<dyn Fn(&str) -> Result<(), std::io::Error>>>, //callback function for stderr
-    stack: Vec<StackValue>,
-    pc: usize,
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::String(s) => write!(f, "{}", s),
+            Value::Int(i) => write!(f, "{}", i),
+        }
+    }
+}
+pub enum OutputType {
+    Stdout,
+    Stderr,
 }
 
-impl VM {
-    pub fn new(program: Vec<Instruction>) -> Self {
-        Self {
-            program,
-            stdout: None,
-            stderr: None,
+pub trait OutputHandler {
+    fn handle_output(
+        &mut self,
+        output: &str,
+        output_type: OutputType,
+    ) -> Result<(), std::io::Error>;
+}
+
+#[derive(Debug)]
+pub enum VMError {
+    StackUnderflow,
+    ContextError(String),
+    IoError(std::io::Error),
+}
+
+impl From<std::io::Error> for VMError {
+    fn from(error: std::io::Error) -> Self {
+        VMError::IoError(error)
+    }
+}
+
+pub struct VM<'a, O: OutputHandler> {
+    instructions: Vec<Instruction>,
+    stack: Vec<Value>,
+    variables: HashMap<String, Value>,
+    ip: usize,
+    output_handler: &'a mut O,
+}
+
+impl<'a, O: OutputHandler> VM<'a, O> {
+    pub fn new(instructions: Vec<Instruction>, output_handler: &'a mut O) -> Self {
+        VM {
+            instructions,
             stack: Vec::new(),
-            pc: 0,
+            variables: HashMap::new(),
+            ip: 0,
+            output_handler,
         }
     }
 
-    pub fn with_stdout(
-        mut self,
-        stdout: Option<Box<dyn Fn(&str) -> Result<(), std::io::Error>>>,
-    ) -> Self {
-        self.stdout = stdout;
-        self
-    }
+    pub fn execute(&mut self) -> Result<(), VMError> {
+        while self.ip < self.instructions.len() {
+            let instruction = &self.instructions[self.ip].clone();
+            self.ip += 1;
 
-    pub fn with_stderr(
-        mut self,
-        stderr: Option<Box<dyn Fn(&str) -> Result<(), std::io::Error>>>,
-    ) -> Self {
-        self.stderr = stderr;
-        self
-    }
-
-    pub fn run(&mut self) -> Result<(), std::io::Error> {
-        while self.pc < self.program.len() {
-            match self.program[self.pc].to_owned() {
-                Instruction::PushStr(s) => {
-                    self.stack.push(StackValue::String(s));
-                }
-                Instruction::PushInt(val) => self.stack.push(StackValue::Int(val)),
+            match instruction {
                 Instruction::PrintStdout => {
-                    let val = self.stack.pop();
-                    if let Some(StackValue::String(s)) = val {
-                        self.print_stdout(&s)?;
-                    } else {
-                        self.print_stderr(&format!(
-                            "[Stack Underflow] - Instruction Pointer: {}",
-                            self.pc
-                        ))?;
-                        break;
-                    }
+                    let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                    self.output_handler
+                        .handle_output(&value.to_string(), OutputType::Stdout)?;
                 }
+                Instruction::PushStr(s) => {
+                    self.stack.push(Value::String(s.clone()));
+                }
+                Instruction::PushInt(val) => self.stack.push(Value::Int(*val)),
                 Instruction::PrintStderr => {
                     let val = self.stack.pop();
-                    if let Some(StackValue::String(s)) = val {
-                        self.stderr.as_ref().unwrap()(&s)?;
+                    if let Some(Value::String(s)) = val {
+                        self.output_handler.handle_output(&s, OutputType::Stderr)?;
                     } else {
-                        self.print_stderr(&format!(
-                            "[Stack Underflow] - Instruction Pointer: {}",
-                            self.pc
-                        ))?;
+                        self.output_handler.handle_output(
+                            &format!("[Stack Underflow] - Instruction Pointer: {}", self.ip),
+                            OutputType::Stderr,
+                        )?;
                         break;
                     }
                 }
                 Instruction::Sleep(duration) => {
-                    std::thread::sleep(std::time::Duration::from_millis(duration));
+                    std::thread::sleep(std::time::Duration::from_millis(*duration));
                 }
                 Instruction::ConditionalJump => todo!(),
                 Instruction::Jump => todo!(),
                 Instruction::End => break,
+                Instruction::Store(key, value) => {
+                    self.variables.insert(key.clone(), value.clone());
+                }
+                Instruction::Load(key) => {
+                    if let Some(value) = self.variables.get(key.into()) {
+                        self.stack.push(value.clone());
+                    } else {
+                        self.output_handler.handle_output(
+                            &format!("[Context Error] - Key not found: {}", key),
+                            OutputType::Stderr,
+                        )?;
+                        break;
+                    }
+                }
             }
-            self.pc += 1;
         }
-
         Ok(())
-    }
-
-    fn print_stdout(&self, value: &str) -> Result<(), std::io::Error> {
-        if let Some(stdout) = self.stdout.as_ref() {
-            stdout(value)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn print_stderr(&self, value: &str) -> Result<(), std::io::Error> {
-        if let Some(stderr) = self.stderr.as_ref() {
-            stderr(value)
-        } else {
-            Ok(())
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestOutputHandler {
+        stdout: String,
+        stderr: String,
+    }
+
+    impl TestOutputHandler {
+        fn new() -> Self {
+            Self {
+                stdout: String::new(),
+                stderr: String::new(),
+            }
+        }
+    }
+
+    impl OutputHandler for TestOutputHandler {
+        fn handle_output(
+            &mut self,
+            output: &str,
+            output_type: OutputType,
+        ) -> Result<(), std::io::Error> {
+            match output_type {
+                OutputType::Stdout => self.stdout.push_str(output),
+                OutputType::Stderr => self.stderr.push_str(output),
+            }
+
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_vm() {
@@ -124,14 +168,36 @@ mod tests {
             Instruction::End,
         ];
 
-        let stdout = |val: &str| -> Result<(), std::io::Error> {
-            assert_eq!(val, "Hello, world!");
-            Ok(())
-        };
+        let mut output_handler = TestOutputHandler::new();
+        {
+            let mut vm = VM::new(program, &mut output_handler);
+            vm.execute().unwrap();
+        }
 
-        let mut vm = VM::new(program).with_stdout(Some(Box::new(stdout)));
-        vm.run().unwrap();
+        assert_eq!(output_handler.stdout, "Hello, world!");
+        assert_eq!(output_handler.stderr.len(), 0);
+    }
 
-        // Check stdout
+    #[test]
+    fn test_vm_with_context() {
+        let program = vec![
+            Instruction::Store("name".to_string(), Value::String("John".to_string())),
+            Instruction::PushStr("Hello, ".to_string()),
+            Instruction::PrintStdout,
+            Instruction::Load("name".to_string()),
+            Instruction::PrintStdout,
+            Instruction::PushStr("!".to_string()),
+            Instruction::PrintStdout,
+            Instruction::End,
+        ];
+
+        let mut output_handler = TestOutputHandler::new();
+        let mut vm = VM::new(program, &mut output_handler);
+        vm.variables
+            .insert("name".to_string(), Value::String("John".to_string()));
+        vm.execute().unwrap();
+
+        assert_eq!(output_handler.stdout, "Hello, John!");
+        assert_eq!(output_handler.stderr.len(), 0);
     }
 }

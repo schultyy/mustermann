@@ -1,0 +1,99 @@
+// Specialized example demonstrating localized data and different output formats
+logs {
+    application_name: "international-store"
+    duration: 12h
+    frequency: 75
+    
+    templates: (
+        { severity: "INFO", message: "Customer $customer.name made a purchase in $customer.region", weight: 5 },
+        { severity: "INFO", message: "New product added: $product.name", weight: 3 },
+        { severity: "WARN", message: "Shipping delay for order $order.id to $customer.region", weight: 2 }
+    )
+    
+    data: (
+        // German customer data
+        german_customer: {
+            name: fake::name::Name(locale: "de_DE"),
+            address: fake::address::StreetName(locale: "de_DE"),
+            city: fake::address::CityName(locale: "de_DE"),
+            region: "Germany"
+        },
+        
+        // French customer data
+        french_customer: {
+            name: fake::name::Name(locale: "fr_FR"),
+            address: fake::address::StreetName(locale: "fr_FR"),
+            city: fake::address::CityName(locale: "fr_FR"),
+            region: "France"
+        },
+        
+        // Japanese customer data
+        japanese_customer: {
+            name: fake::name::Name(locale: "ja_JP"),
+            address: fake::address::StreetName(locale: "ja_JP"),
+            city: fake::address::CityName(locale: "ja_JP"),
+            region: "Japan"
+        },
+        
+        // Use one of the customers randomly
+        customer: fake::utils::either("$german_customer", "$french_customer", "$japanese_customer"),
+        
+        product: {
+            id: fake::uuid::UUIDv4(),
+            name: fake::commerce::ProductName(),
+            price: fake::number::NumberWithFormat("##.##"),
+            category: fake::commerce::Categories()
+        },
+        
+        order: {
+            id: fake::number::NumberWithFormat("ORD-#####"),
+            date: fake::date::Date(),
+            status: fake::utils::either("pending", "shipped", "delivered", "cancelled")
+        }
+    )
+    
+    output: {
+        format: "json",
+        destination: "stdout"
+    }
+}
+
+// Example with OpenTelemetry compatible output
+logs {
+    application_name: "payment-processor"
+    duration: indefinite
+    frequency: 150
+    
+    templates: (
+        { severity: "INFO", message: "Payment processed successfully for transaction $transaction.id", weight: 10 },
+        { severity: "WARN", message: "Payment retry for transaction $transaction.id", weight: 3 },
+        { severity: "ERROR", message: "Payment failed: $transaction.error_message", weight: 1 }
+    )
+    
+    data: (
+        transaction: {
+            id: fake::uuid::UUIDv4(),
+            amount: fake::number::NumberWithFormat("####.##"),
+            currency: fake::currency::CurrencyCode(),
+            card_type: fake::utils::either("visa", "mastercard", "amex", "discover"),
+            error_message: fake::lorem::Sentence(1..2)
+        },
+        
+        customer_id: fake::uuid::UUIDv4(),
+        merchant_id: fake::number::NumberWithFormat("MER######")
+    )
+    
+    context: {
+        trace_id: fake::uuid::UUIDv4(),
+        span_id: fake::uuid::UUIDv4(),
+        service_name: "payment-processor",
+        service_version: "1.2.3",
+        environment: fake::utils::either("development", "staging", "production")
+    }
+    
+    output: {
+        format: "json",
+        destination: "http",
+        endpoint: "http://localhost:4318/v1/logs"
+    }
+} 

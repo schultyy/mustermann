@@ -8,6 +8,7 @@ use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 
 mod logger;
+mod parser;
 mod telemetry;
 mod tracer;
 
@@ -15,6 +16,10 @@ mod tracer;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Path to the muster file
+    #[arg(short, long)]
+    muster_file: Option<String>,
+
     /// OTLP endpoint URL when using OTLP logging
     #[arg(short, long, default_value = "http://localhost:4317")]
     otlp_endpoint: String,
@@ -45,6 +50,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
     let mut logger_provider: Option<LoggerProvider> = None;
+
+    // Parse muster file if provided
+    if let Some(muster_file) = &args.muster_file {
+        info!("Parsing muster file: {}", muster_file);
+        match std::fs::read_to_string(muster_file) {
+            Ok(content) => {
+                match parser::parser::parse_muster(&content) {
+                    Ok(muster) => {
+                        info!(
+                            "Successfully parsed muster with {} logs block(s)",
+                            muster.logs_blocks.len()
+                        );
+                        // In a future implementation, this is where we would process the muster file
+                        // and generate logs based on the parsed AST
+                    }
+                    Err(e) => {
+                        eprintln!("Error parsing muster file: {}", e);
+                        return Ok(());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Error reading muster file: {}", e);
+                return Ok(());
+            }
+        }
+    }
 
     // Configure logging based on the selected output
     match args.log {
@@ -90,8 +122,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_demo_data()
     } else if args.log == Some(LogOutput::Otlp) {
         log_demo_data()
-    } else {
-        eprintln!("No CLI arguments provided");
+    } else if args.muster_file.is_none() {
+        eprintln!("No CLI arguments provided. Use --muster-file to specify a muster file or use --log for default behavior.");
     }
 
     opentelemetry::global::shutdown_tracer_provider();

@@ -1,0 +1,28 @@
+// Basic example showing a simple log generator for a checkout service
+logs {
+    application_name: "checkout-service"
+    duration: indefinite
+    frequency: 100
+    
+    templates: (
+        { severity: "INFO", message: "Performed checkout for user $user.id with amount $transaction.amount $transaction.currency" },
+        { severity: "ERROR", message: "Checkout failed. Reason: $reason" }
+    )
+    
+    data: (
+        user: {
+            name: fake::name::Name(),
+            id: fake::uuid::UUIDv4()
+        },
+        transaction: {
+            amount: fake::number::NumberWithFormat("###.##"),
+            currency: fake::currency::CurrencyCode()
+        },
+        reason: fake::lorem::Sentence(1..2)
+    )
+    
+    output: {
+        format: "json",
+        destination: "stdout"
+    }
+} 

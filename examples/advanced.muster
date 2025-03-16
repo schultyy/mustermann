@@ -1,0 +1,118 @@
+// Advanced example demonstrating multiple features of the Mustermann DSL
+logs {
+    application_name: "e-commerce-service"
+    duration: 1h
+    frequency: 50
+    
+    templates: (
+        { severity: "INFO", message: "User $user.name ($user.id) logged in", weight: 10 },
+        { severity: "INFO", message: "Added item $item.name to cart for user $user.id", weight: 8 },
+        { severity: "INFO", message: "Processed payment of $payment.amount $payment.currency for order $order.id", weight: 5 },
+        { severity: "WARN", message: "Unusual activity detected for user $user.id from IP $user.ip", weight: 2 },
+        { 
+            severity: "ERROR", 
+            message: "Payment declined: $payment.decline_reason", 
+            weight: 1,
+            when: "$payment.status == 'declined'"
+        }
+    )
+    
+    flows: (
+        checkout: [
+            { severity: "INFO", message: "Checkout initiated by user $user.id" },
+            { severity: "INFO", message: "Validating shipping information" },
+            { severity: "INFO", message: "Processing payment of $payment.amount $payment.currency" },
+            { 
+                severity: "ERROR", 
+                message: "Payment processing failed: $payment.error", 
+                probability: 0.15,
+                data: { payment: { error: fake::lorem::Sentence(1..2), status: "declined" } }
+            },
+            { 
+                severity: "INFO", 
+                message: "Order $order.id confirmed and placed", 
+                when: "$payment.status != 'declined'"
+            }
+        ]
+    )
+    
+    data: (
+        user: {
+            id: fake::uuid::UUIDv4(),
+            name: fake::name::Name(),
+            email: fake::internet::SafeEmail(),
+            ip: fake::internet::IPv4()
+        },
+        item: {
+            id: fake::uuid::UUIDv4(),
+            name: fake::commerce::ProductName(),
+            price: fake::number::NumberWithFormat("##.##")
+        },
+        order: {
+            id: fake::number::NumberWithFormat("ORD-#####"),
+            items: fake::number::Digit(),
+            total: fake::number::NumberWithFormat("###.##")
+        },
+        payment: {
+            amount: "$order.total",
+            currency: fake::currency::CurrencyCode(),
+            status: fake::utils::either("approved", "declined", "processing"),
+            decline_reason: fake::payment::DeclineReason()
+        }
+    )
+    
+    context: {
+        trace_id: fake::uuid::UUIDv4(),
+        span_id: fake::uuid::UUIDv4(),
+        persistent: true
+    }
+    
+    patterns: {
+        peak_hours: {
+            schedule: "* 10:00-14:00,18:00-22:00",
+            multiplier: 2.5
+        },
+        maintenance_window: {
+            schedule: "Sat 02:00-04:00",
+            multiplier: 0.2
+        }
+    }
+    
+    output: {
+        format: "json",
+        destination: "file",
+        file_path: "e-commerce-logs.json"
+    }
+}
+
+// Multiple log sources in the same file
+logs {
+    application_name: "inventory-service"
+    duration: indefinite
+    frequency: 200
+    
+    templates: (
+        { severity: "INFO", message: "Inventory updated for item $item.id", weight: 5 },
+        { severity: "WARN", message: "Low stock alert for item $item.id ($item.name)", weight: 1 }
+    )
+    
+    data: (
+        item: {
+            id: fake::uuid::UUIDv4(),
+            name: fake::commerce::ProductName(),
+            stock: fake::number::NumberWithFormat("##"),
+            category: fake::commerce::Categories()
+        }
+    )
+    
+    context: {
+        service_id: "inventory-001",
+        region: fake::utils::either("us-east", "us-west", "eu-central")
+    }
+    
+    output: {
+        format: "json",
+        destination: "file",
+        file_path: "inventory-logs.json"
+    }
+} 

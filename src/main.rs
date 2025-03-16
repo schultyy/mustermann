@@ -6,6 +6,7 @@ use tracing::{error, info};
 mod parser;
 mod telemetry;
 mod visitor;
+mod vm;
 
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]

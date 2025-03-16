@@ -1,16 +1,10 @@
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 
-use logger::log_demo_data;
 use opentelemetry_sdk::{self, logs::LoggerProvider};
-use telemetry::{setup_otlp_logger, setup_tracer};
-use tracer::simulate_checkout_process;
-use tracing::{debug, error, info};
-use tracing_subscriber::prelude::*;
+use tracing::{error, info};
 
-mod logger;
 mod parser;
 mod telemetry;
-mod tracer;
 mod visitor;
 
 /// CLI tool for pattern matching

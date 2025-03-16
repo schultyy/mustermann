@@ -20,6 +20,8 @@ pub struct VM {
     program: Vec<Instruction>,
     stdout: Option<Box<dyn Fn(&str) -> Result<(), std::io::Error>>>, //callback function for stdout
     stderr: Option<Box<dyn Fn(&str) -> Result<(), std::io::Error>>>, //callback function for stderr
+    stack: Vec<StackValue>,
+    pc: usize,
 }
 
 impl VM {
@@ -28,6 +30,8 @@ impl VM {
             program,
             stdout: None,
             stderr: None,
+            stack: Vec::new(),
+            pc: 0,
         }
     }
 
@@ -47,36 +51,33 @@ impl VM {
         self
     }
 
-    pub fn run(&self) -> Result<(), std::io::Error> {
-        let mut pc = 0;
-        let mut stack = Vec::new();
-
-        while pc < self.program.len() {
-            match self.program[pc].to_owned() {
+    pub fn run(&mut self) -> Result<(), std::io::Error> {
+        while self.pc < self.program.len() {
+            match self.program[self.pc].to_owned() {
                 Instruction::PushStr(s) => {
-                    stack.push(StackValue::String(s));
+                    self.stack.push(StackValue::String(s));
                 }
-                Instruction::PushInt(val) => stack.push(StackValue::Int(val)),
+                Instruction::PushInt(val) => self.stack.push(StackValue::Int(val)),
                 Instruction::PrintStdout => {
-                    let val = stack.pop();
+                    let val = self.stack.pop();
                     if let Some(StackValue::String(s)) = val {
                         self.print_stdout(&s)?;
                     } else {
                         self.print_stderr(&format!(
                             "[Stack Underflow] - Instruction Pointer: {}",
-                            pc
+                            self.pc
                         ))?;
                         break;
                     }
                 }
                 Instruction::PrintStderr => {
-                    let val = stack.pop();
+                    let val = self.stack.pop();
                     if let Some(StackValue::String(s)) = val {
                         self.stderr.as_ref().unwrap()(&s)?;
                     } else {
                         self.print_stderr(&format!(
                             "[Stack Underflow] - Instruction Pointer: {}",
-                            pc
+                            self.pc
                         ))?;
                         break;
                     }
@@ -88,7 +89,7 @@ impl VM {
                 Instruction::Jump => todo!(),
                 Instruction::End => break,
             }
-            pc += 1;
+            self.pc += 1;
         }
 
         Ok(())
@@ -128,7 +129,7 @@ mod tests {
             Ok(())
         };
 
-        let vm = VM::new(program).with_stdout(Some(Box::new(stdout)));
+        let mut vm = VM::new(program).with_stdout(Some(Box::new(stdout)));
         vm.run().unwrap();
 
         // Check stdout

@@ -150,6 +150,7 @@ pub mod parser {
         IResult,
     };
     use std::str::FromStr;
+    use tracing::{debug, error};
 
     // Helper functions for parsing
 
@@ -703,7 +704,7 @@ pub mod parser {
     }
 
     pub fn parse_muster(input: &str) -> Result<Muster, String> {
-        println!("Parsing muster: {:?}", input);
+        debug!("Parsing muster: {:?}", input);
 
         // Trim whitespace
         let input = input.trim();
@@ -756,13 +757,13 @@ pub mod parser {
                             remaining = &remaining[logs_end..];
                         }
                         Err(e) => {
-                            println!("Parser error: {:?}", e);
+                            error!("Parser error: {:?}", e);
                             return Err(format!("Failed to parse Muster: {:?}", e));
                         }
                     }
                 } else {
                     // No matching closing brace found
-                    println!("Parser error: No matching closing brace found");
+                    error!("Parser error: No matching closing brace found");
                     return Err(
                         "Failed to parse Muster: No matching closing brace found".to_string()
                     );
@@ -774,7 +775,7 @@ pub mod parser {
         }
 
         if logs_blocks.is_empty() {
-            println!("Parser error: No logs blocks found");
+            error!("Parser error: No logs blocks found");
             return Err("Failed to parse Muster: No logs blocks found".to_string());
         }
 

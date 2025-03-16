@@ -200,4 +200,24 @@ mod tests {
         assert_eq!(output_handler.stdout, "Hello, John!");
         assert_eq!(output_handler.stderr.len(), 0);
     }
+
+    #[test]
+    fn test_vm_with_context_error() {
+        let program = vec![
+            Instruction::Store("name".to_string(), Value::String("John".to_string())),
+            Instruction::Load("name123".to_string()),
+            Instruction::PrintStdout,
+            Instruction::End,
+        ];
+
+        let mut output_handler = TestOutputHandler::new();
+        let mut vm = VM::new(program, &mut output_handler);
+        vm.execute().unwrap();
+
+        assert_eq!(output_handler.stdout.len(), 0);
+        assert_eq!(
+            output_handler.stderr,
+            "[Context Error] - Key not found: name123"
+        );
+    }
 }

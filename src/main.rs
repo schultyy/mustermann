@@ -2,11 +2,11 @@ use clap::Parser;
 
 use opentelemetry_sdk::{self, logs::LoggerProvider};
 use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 mod parser;
 mod telemetry;
 mod visitor;
-mod vm;
 
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
@@ -23,6 +23,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let logger_provider: Option<LoggerProvider> = None;
 
+    // Initialize tracing with appropriate filter
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     // Parse muster file if provided
     if let Some(muster_file) = &args.muster_file {
         info!("Parsing muster file: {}", muster_file);
@@ -34,10 +39,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "Successfully parsed muster with {} logs block(s)",
                             muster.logs_blocks.len()
                         );
-                        // In a future implementation, this is where we would process the muster file
-                        // and generate logs based on the parsed AST
+
+                        // Create and run the visitor
                         let visitor = visitor::Visitor::new(&muster);
-                        visitor.visit_muster();
+                        match visitor.run().await {
+                            Ok(_) => info!("Visitor completed successfully"),
+                            Err(e) => error!("Visitor failed: {:?}", e),
+                        }
                     }
                     Err(e) => {
                         error!("Error parsing muster file: {}", e);

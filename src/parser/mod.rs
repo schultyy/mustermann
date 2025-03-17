@@ -339,7 +339,10 @@ pub mod parser {
                         ws(map_res(digit1, |s: &str| s.parse::<u32>())),
                     ))),
                     opt(ws(char(','))),
-                    opt(ws(preceded(ws(tag("when:")), ws(string_literal)))),
+                    opt(alt((
+                        ws(preceded(ws(tag("when:")), ws(string_literal))),
+                        ws(preceded(ws(tag("condition:")), ws(string_literal))),
+                    ))),
                 )),
                 |(severity, _, message, _, weight, _, condition)| Template {
                     severity,

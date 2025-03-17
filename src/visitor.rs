@@ -307,19 +307,64 @@ impl<'a> Visitor<'a> {
         // Evaluate the template message with data substitutions
         let message = Self::evaluate_message(&template.message, &iteration_data);
 
-        // Log using the appropriate severity
+        // Generate a unique ID for this log entry
+        let log_id = Uuid::new_v4().to_string();
+
+        // Log using the appropriate severity - always include app_name for filtering
+        // This ensures these logs are identified as muster-generated logs
         match template.severity {
-            LogSeverity::Trace => trace!(app_name = app_name, "{}", message),
-            LogSeverity::Debug => debug!(app_name = app_name, "{}", message),
-            LogSeverity::Info => info!(app_name = app_name, "{}", message),
-            LogSeverity::Warn => warn!(app_name = app_name, "{}", message),
-            LogSeverity::Error => error!(app_name = app_name, "{}", message),
-            LogSeverity::Fatal => error!(app_name = app_name, "FATAL: {}", message),
+            LogSeverity::Trace => trace!(
+                app_name = app_name,
+                log_id = log_id,
+                log_source = "muster",
+                "{}",
+                message
+            ),
+            LogSeverity::Debug => debug!(
+                app_name = app_name,
+                log_id = log_id,
+                log_source = "muster",
+                "{}",
+                message
+            ),
+            LogSeverity::Info => info!(
+                app_name = app_name,
+                log_id = log_id,
+                log_source = "muster",
+                "{}",
+                message
+            ),
+            LogSeverity::Warn => warn!(
+                app_name = app_name,
+                log_id = log_id,
+                log_source = "muster",
+                "{}",
+                message
+            ),
+            LogSeverity::Error => error!(
+                app_name = app_name,
+                log_id = log_id,
+                log_source = "muster",
+                "{}",
+                message
+            ),
+            LogSeverity::Fatal => error!(
+                app_name = app_name,
+                log_id = log_id,
+                log_source = "muster",
+                "FATAL: {}",
+                message
+            ),
         }
     }
 
     async fn process_flow(app_name: &str, flow: &Flow, data: &HashMap<String, Value>) {
-        info!(app_name = app_name, "Starting flow: {}", flow.name);
+        info!(
+            app_name = app_name,
+            flow_name = flow.name,
+            log_source = "muster",
+            "Starting flow"
+        );
 
         // Create a base clone of the data for this flow
         let mut flow_data = data.clone();
@@ -349,72 +394,118 @@ impl<'a> Visitor<'a> {
                 }
             }
 
-            // Check probability if specified
+            // Evaluate the template message with data substitutions
+            let message = Self::evaluate_message(&step.message, &step_data);
+
+            // Check probability (if present) to determine if this step should execute
             if let Some(probability) = step.probability {
-                let mut rng = rand::thread_rng();
-                if rng.gen::<f64>() > probability {
-                    trace!(app_name = app_name, "Skipping step due to probability");
+                let random_value: f64 = rand::random();
+                if random_value > probability {
+                    debug!(
+                        app_name = app_name,
+                        flow_name = flow.name,
+                        log_source = "muster",
+                        "Skipping step due to probability: {} > {}",
+                        random_value,
+                        probability
+                    );
                     continue;
                 }
             }
 
-            // Check condition if present
-            if let Some(condition) = &step.condition {
-                trace!(app_name = app_name, "Step has condition: {}", condition);
-                // Skip for now since condition evaluation is not fully implemented
-                continue;
-            }
-
-            // Handle delay if specified
-            if let Some(delay) = &step.delay {
-                match delay {
+            // Handle any delay
+            if let Some(duration) = &step.delay {
+                match duration {
                     MusterDuration::Fixed(duration) => {
-                        debug!(app_name = app_name, "Delaying for {:?}", duration);
+                        debug!(
+                            app_name = app_name,
+                            flow_name = flow.name,
+                            log_source = "muster",
+                            "Delaying for {:?}",
+                            duration
+                        );
                         sleep(*duration).await;
                     }
                     MusterDuration::Indefinite => {
                         error!(
                             app_name = app_name,
-                            "Indefinite delay not supported in flow steps"
+                            flow_name = flow.name,
+                            log_source = "muster",
+                            "Indefinite delay not supported in flow steps, skipping delay"
                         );
-                        continue;
                     }
                 }
             }
 
-            // Merge flow step data with global data
-            if let Some(step_specific_data) = &step.data {
-                for (k, v) in step_specific_data {
-                    // Generate fake data for step-specific data
-                    match v {
-                        Value::FakeGenerator { generator, args } => {
-                            let fake_value = Self::generate_fake_data(generator, args);
-                            step_data.insert(k.clone(), Value::String(fake_value));
-                        }
-                        _ => {
-                            step_data.insert(k.clone(), v.clone());
-                        }
-                    }
-                }
-            }
+            // Generate a unique ID for this log entry
+            let log_id = Uuid::new_v4().to_string();
 
-            // Evaluate the message with data substitutions
-            let message = Self::evaluate_message(&step.message, &step_data);
-
-            // Log using the appropriate severity
+            // Log the message with the appropriate severity
             match step.severity {
-                LogSeverity::Trace => trace!(app_name = app_name, flow = flow.name, "{}", message),
-                LogSeverity::Debug => debug!(app_name = app_name, flow = flow.name, "{}", message),
-                LogSeverity::Info => info!(app_name = app_name, flow = flow.name, "{}", message),
-                LogSeverity::Warn => warn!(app_name = app_name, flow = flow.name, "{}", message),
-                LogSeverity::Error => error!(app_name = app_name, flow = flow.name, "{}", message),
-                LogSeverity::Fatal => {
-                    error!(app_name = app_name, flow = flow.name, "FATAL: {}", message)
+                LogSeverity::Trace => trace!(
+                    app_name = app_name,
+                    flow_name = flow.name,
+                    log_id = log_id,
+                    log_source = "muster",
+                    "{}",
+                    message
+                ),
+                LogSeverity::Debug => debug!(
+                    app_name = app_name,
+                    flow_name = flow.name,
+                    log_id = log_id,
+                    log_source = "muster",
+                    "{}",
+                    message
+                ),
+                LogSeverity::Info => info!(
+                    app_name = app_name,
+                    flow_name = flow.name,
+                    log_id = log_id,
+                    log_source = "muster",
+                    "{}",
+                    message
+                ),
+                LogSeverity::Warn => warn!(
+                    app_name = app_name,
+                    flow_name = flow.name,
+                    log_id = log_id,
+                    log_source = "muster",
+                    "{}",
+                    message
+                ),
+                LogSeverity::Error => error!(
+                    app_name = app_name,
+                    flow_name = flow.name,
+                    log_id = log_id,
+                    log_source = "muster",
+                    "{}",
+                    message
+                ),
+                LogSeverity::Fatal => error!(
+                    app_name = app_name,
+                    flow_name = flow.name,
+                    log_id = log_id,
+                    log_source = "muster",
+                    "FATAL: {}",
+                    message
+                ),
+            }
+
+            // Check if there's context data to update in this step
+            if let Some(step_context_data) = &step.data {
+                for (key, value) in step_context_data {
+                    flow_data.insert(key.clone(), value.clone());
                 }
             }
         }
 
-        info!(app_name = app_name, "Completed flow: {}", flow.name);
+        debug!(
+            app_name = app_name,
+            flow_name = flow.name,
+            log_source = "muster",
+            "Flow completed"
+        );
     }
 
     fn evaluate_message(message: &str, data: &HashMap<String, Value>) -> String {

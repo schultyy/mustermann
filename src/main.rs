@@ -1,8 +1,5 @@
 use clap::Parser;
-
-use opentelemetry_sdk::{self, logs::LoggerProvider};
 use tracing::{error, info};
-use tracing_subscriber::EnvFilter;
 
 mod parser;
 mod telemetry;
@@ -15,18 +12,31 @@ struct Args {
     /// Path to the muster file
     #[arg(short, long)]
     muster_file: Option<String>,
+
+    /// OTLP endpoint for exporting logs
+    #[arg(long)]
+    otlp_endpoint: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
-    let logger_provider: Option<LoggerProvider> = None;
 
-    // Initialize tracing with appropriate filter
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    // Initialize combined logging for both internal telemetry and muster data
+    let logger_provider = match &args.otlp_endpoint {
+        Some(endpoint) => {
+            // This info won't be seen because logging isn't set up yet, but that's okay
+            let provider = telemetry::setup_combined_logging(Some(endpoint))?;
+            info!("Logging initialized with OTLP export to: {}", endpoint);
+            provider
+        }
+        None => {
+            let provider = telemetry::setup_combined_logging(None)?;
+            info!("Logging initialized (local only, no OTLP export)");
+            provider
+        }
+    };
 
     // Parse muster file if provided
     if let Some(muster_file) = &args.muster_file {
@@ -62,9 +72,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         error!("No CLI arguments provided. Use --muster-file to specify a muster file or use --log for default behavior.");
     }
 
+    // Shutdown providers
+    info!("Shutting down...");
     opentelemetry::global::shutdown_tracer_provider();
-    if let Some(logger_provider) = logger_provider {
-        logger_provider.shutdown()?;
-    }
+    logger_provider.shutdown()?;
+
     Ok(())
 }

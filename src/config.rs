@@ -36,6 +36,14 @@ pub enum Frequency {
     Amount(u64),
     Const(String),
 }
+impl std::fmt::Display for Frequency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Frequency::Amount(amount) => write!(f, "{}", amount),
+            Frequency::Const(val) => write!(f, "{}", val),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Task {

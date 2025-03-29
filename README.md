@@ -20,7 +20,7 @@ Or install it from the [releases page](https://github.com/schultyy/mustermann/re
 
 ```yaml
 - task_name: App Logs
-  frequency: infinite
+  frequency: Infinite
   template: "User %s logged in"
   vars:
     - Franz Josef

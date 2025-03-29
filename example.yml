@@ -1,6 +1,6 @@
 tasks:
   - name: App Logs
-    frequency: infinite
+    frequency: Infinite
     template: "User %s logged in"
     vars:
       - Franz Josef
@@ -8,7 +8,7 @@ tasks:
       - Heinz
     severity: INFO
   - name: App Login Errors
-    frequency: Amount(45)
+    frequency: 45
     template: "Failed to login: %s"
     vars:
       - Invalid username or password

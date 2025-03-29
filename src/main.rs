@@ -4,7 +4,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod config;
 mod log_runner;
 mod otel;
-
+mod vm;
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

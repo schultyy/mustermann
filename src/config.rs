@@ -75,7 +75,7 @@ mod tests {
             vars:
               - Invalid username or password
               - Upstream connection refused
-            severity: ERROR
+            severity: Error
           "
         .to_string()
     }
@@ -85,13 +85,13 @@ mod tests {
         tasks:
         - name: App Logs
           frequency: 45
-          count: infinite
+          count: Infinite
           template: \"User %s logged in\"
           vars:
             - Franz Josef
             - 34
             - Heinz
-          severity: INFO
+          severity: Info
         "
         .to_string()
     }

@@ -5,7 +5,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod code_gen;
 mod config;
-mod log_runner;
 mod otel;
 mod runtime_error;
 mod vm;

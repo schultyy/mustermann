@@ -123,10 +123,10 @@ fn print_task(task: &Task, index: usize) {
     let templated_string = interpolate(&task, index);
     match task.severity {
         Severity::Info => {
-            tracing::info!(app_name = task.name, templated_string);
+            tracing::info!(app_name = task.name, "{}", templated_string);
         }
         Severity::Error => {
-            tracing::error!(app_name = task.name, templated_string);
+            tracing::error!(app_name = task.name, "{}", templated_string);
         }
     }
 }

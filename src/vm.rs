@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::config::{Config, Count, Task};
+use crate::config::{Config, Count, Severity, Task};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StackValue {
@@ -26,6 +26,7 @@ pub enum Instruction {
     Label(String),
     StrJoin,
     Stdout,
+    Stderr,
     Sleep(u64),
     StoreVar(String, String),
     LoadVar(String),
@@ -82,7 +83,10 @@ impl<'a> ByteCodeGenerator<'a> {
         code.push(Instruction::Push(StackValue::String(" ".to_string())));
         code.push(Instruction::LoadVar("template".into()));
         code.push(Instruction::StrJoin);
-        code.push(Instruction::Stdout);
+        match task.severity {
+            Severity::Info => code.push(Instruction::Stdout),
+            Severity::Error => code.push(Instruction::Stderr),
+        }
         code.push(Instruction::Sleep(task.frequency));
         code.push(Instruction::Jump(format!("loop_{}", task.name)));
         code.push(Instruction::Label(format!("end_{}", task.name)));
@@ -111,7 +115,10 @@ impl<'a> ByteCodeGenerator<'a> {
         code.push(Instruction::Push(StackValue::String(" ".to_string())));
         code.push(Instruction::LoadVar("template".into()));
         code.push(Instruction::StrJoin);
-        code.push(Instruction::Stdout);
+        match task.severity {
+            Severity::Info => code.push(Instruction::Stdout),
+            Severity::Error => code.push(Instruction::Stderr),
+        }
         code.push(Instruction::Sleep(task.frequency));
         code.push(Instruction::Jump(format!("loop_{}", task.name)));
         code.push(Instruction::Label(format!("end_{}", task.name)));
@@ -210,6 +217,16 @@ impl VM {
                     StackValue::String(s) => {
                         let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
                         tracing::info!(app_name = name.to_string(), "{}", s);
+                    }
+                    _ => return Err(VMError::InvalidStackValue),
+                }
+            }
+            Instruction::Stderr => {
+                let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                match top {
+                    StackValue::String(s) => {
+                        let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
+                        tracing::error!(app_name = name.to_string(), "{}", s);
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
@@ -359,6 +376,58 @@ mod tests {
         assert_eq!(code[5], Instruction::LoadVar("template".to_string()));
         assert_eq!(code[6], Instruction::StrJoin);
         assert_eq!(code[7], Instruction::Stdout);
+        assert_eq!(code[8], Instruction::Sleep(1000));
+        assert_eq!(code[9], Instruction::Jump("loop_test".to_string()));
+        assert_eq!(code[10], Instruction::Label("end_test".to_string()));
+    }
+
+    #[test]
+    fn test_print_stderr() {
+        let config = Config {
+            tasks: vec![Task {
+                name: "test".to_string(),
+                frequency: 1000,
+                count: Count::Const("Infinite".to_string()),
+                template: "User logged in".to_string(),
+                vars: vec![],
+                severity: Severity::Error,
+            }],
+        };
+        let generator = ByteCodeGenerator::new(&config.tasks[0]);
+        let code = generator.process_task().unwrap();
+
+        /*
+        StoreVar("name", "test")              // Store task name
+        StoreVar("template", "User logged in") // Store template
+        Label("loop_start")                   // Loop start
+        LoadVar("name")                       // Load the name (was "test")
+        Push(" ")                             // Push separator
+        LoadVar("template")                   // Load template
+        StrJoin                               // Join the strings
+        StdErr                                // Print to stderr
+        Sleep(1000)                           // Wait 1 second
+        Jump("loop_start")                    // Jump back to loop start
+        Label("loop_end")                     // Loop end
+        */
+
+        assert_eq!(code.len(), 11);
+        assert_eq!(
+            code[0],
+            Instruction::StoreVar("name".to_string(), "test".to_string())
+        );
+        assert_eq!(
+            code[1],
+            Instruction::StoreVar("template".to_string(), "User logged in".to_string())
+        );
+        assert_eq!(code[2], Instruction::Label("loop_test".to_string()));
+        assert_eq!(code[3], Instruction::LoadVar("name".to_string()));
+        assert_eq!(
+            code[4],
+            Instruction::Push(StackValue::String(" ".to_string()))
+        );
+        assert_eq!(code[5], Instruction::LoadVar("template".to_string()));
+        assert_eq!(code[6], Instruction::StrJoin);
+        assert_eq!(code[7], Instruction::Stderr);
         assert_eq!(code[8], Instruction::Sleep(1000));
         assert_eq!(code[9], Instruction::Jump("loop_test".to_string()));
         assert_eq!(code[10], Instruction::Label("end_test".to_string()));

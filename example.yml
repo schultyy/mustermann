@@ -1,0 +1,16 @@
+tasks:
+  - name: App Logs
+    frequency: infinite
+    template: "User %s logged in"
+    vars:
+      - Franz Josef
+      - 34
+      - Heinz
+    severity: INFO
+  - name: App Login Errors
+    frequency: Amount(45)
+    template: "Failed to login: %s"
+    vars:
+      - Invalid username or password
+      - Upstream connection refused
+    severity: ERROR

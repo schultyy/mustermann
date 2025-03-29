@@ -1,8 +1,33 @@
 use serde::Deserialize;
-
+use std::fs::File;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub tasks: Vec<Task>,
+}
+
+#[derive(Debug)]
+pub enum ConfigError {
+    Io(std::io::Error),
+    Yaml(serde_yaml::Error),
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::Io(e) => write!(f, "IO error: {}", e),
+            ConfigError::Yaml(e) => write!(f, "YAML error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+impl Config {
+    pub(crate) fn from_file(file_path: &str) -> Result<Self, ConfigError> {
+        let file = File::open(file_path).map_err(ConfigError::Io)?;
+        let config = serde_yaml::from_reader(file).map_err(ConfigError::Yaml)?;
+        Ok(config)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

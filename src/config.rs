@@ -32,15 +32,15 @@ impl Config {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
-pub enum Frequency {
+pub enum Count {
     Amount(u64),
     Const(String),
 }
-impl std::fmt::Display for Frequency {
+impl std::fmt::Display for Count {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Frequency::Amount(amount) => write!(f, "{}", amount),
-            Frequency::Const(val) => write!(f, "{}", val),
+            Count::Amount(amount) => write!(f, "{}", amount),
+            Count::Const(val) => write!(f, "{}", val),
         }
     }
 }
@@ -54,7 +54,8 @@ pub enum Severity {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Task {
     pub name: String,
-    pub frequency: Frequency,
+    pub frequency: u64,
+    pub count: Count,
     pub template: String,
     pub vars: Vec<String>,
     pub severity: Severity,
@@ -69,6 +70,7 @@ mod tests {
         tasks:
           - name: App Login Errors
             frequency: 45
+            count: 10
             template: \"Failed to login: %s\"
             vars:
               - Invalid username or password
@@ -82,7 +84,8 @@ mod tests {
         "
         tasks:
         - name: App Logs
-          frequency: Infinite
+          frequency: 45
+          count: infinite
           template: \"User %s logged in\"
           vars:
             - Franz Josef
@@ -98,7 +101,8 @@ mod tests {
         let config = serde_yaml::from_str::<Config>(&single_task_config()).unwrap();
         assert_eq!(config.tasks.len(), 1);
         assert_eq!(config.tasks[0].name, "App Login Errors");
-        assert_eq!(config.tasks[0].frequency, Frequency::Amount(45));
+        assert_eq!(config.tasks[0].frequency, 45);
+        assert_eq!(config.tasks[0].count, Count::Amount(10));
         assert_eq!(config.tasks[0].template, "Failed to login: %s");
         assert_eq!(
             config.tasks[0].vars,
@@ -113,10 +117,8 @@ mod tests {
     #[test]
     fn test_config_parse_infinite_frequency() {
         let config = serde_yaml::from_str::<Config>(&infinite_frequency_config()).unwrap();
-        assert_eq!(
-            config.tasks[0].frequency,
-            Frequency::Const("Infinite".to_string())
-        );
+        assert_eq!(config.tasks[0].frequency, 45);
+        assert_eq!(config.tasks[0].count, Count::Const("Infinite".to_string()));
         assert_eq!(config.tasks[0].template, "User %s logged in");
         assert_eq!(config.tasks[0].vars, vec!["Franz Josef", "34", "Heinz"]);
         assert_eq!(config.tasks[0].severity, Severity::Info);

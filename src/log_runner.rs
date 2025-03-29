@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio::task::JoinHandle;
 
-use crate::config::{Config, Frequency, Severity, Task};
+use crate::config::{Config, Count, Severity, Task};
 
 #[derive(Debug)]
 pub enum LogRunnerError {
@@ -49,11 +49,11 @@ impl LogRunner {
         let mut handles = Vec::new();
         for task in self.config.tasks.iter() {
             let task = task.clone();
-            match task.frequency {
-                Frequency::Amount(_) => {
+            match task.count {
+                Count::Amount(_) => {
                     handles.push(self.run_frequency_task(task.clone()).await);
                 }
-                Frequency::Const(_) => {
+                Count::Const(_) => {
                     handles.push(self.run_infinite_task(task.clone()).await);
                 }
             }
@@ -69,17 +69,18 @@ impl LogRunner {
 
     async fn run_frequency_task(&self, task: Task) -> JoinHandle<Result<(), LogRunnerError>> {
         return tokio::spawn(async move {
-            let frequency = match task.frequency {
-                Frequency::Amount(amount) => amount,
-                Frequency::Const(_) => {
+            let count_target = match task.count {
+                Count::Amount(amount) => amount,
+                Count::Const(_) => {
                     return Err(LogRunnerError::InvalidFrequency(format!(
                         "Expected Amount, got {}",
                         task.frequency
                     )))
                 }
             };
-            let mut interval = tokio::time::interval(Duration::from_secs(frequency as u64));
+            let mut interval = tokio::time::interval(Duration::from_millis(task.frequency));
             let mut index = 0;
+            let mut count = 0;
             loop {
                 interval.tick().await;
                 print_task(&task, index);
@@ -87,19 +88,24 @@ impl LogRunner {
                 if index >= task.vars.len() {
                     index = 0;
                 }
+                count += 1;
+                if count >= count_target {
+                    break;
+                }
             }
+            Ok(())
         });
     }
 
     async fn run_infinite_task(&self, task: Task) -> JoinHandle<Result<(), LogRunnerError>> {
         return tokio::spawn(async move {
-            if task.frequency != Frequency::Const("Infinite".to_string()) {
+            if task.count != Count::Const("Infinite".to_string()) {
                 return Err(LogRunnerError::InvalidFrequency(format!(
                     "Expected Infinite, got {}",
                     task.frequency
                 )));
             }
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut interval = tokio::time::interval(Duration::from_millis(task.frequency));
             let mut index = 0;
             loop {
                 interval.tick().await;

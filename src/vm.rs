@@ -87,13 +87,6 @@ impl VM {
             Instruction::Label(_) => {
                 // Labels are used for jumps and are not executed
             }
-            Instruction::StrJoin => {
-                let mut joined = String::new();
-                while let Some(StackValue::String(s)) = self.stack.pop() {
-                    joined.push_str(&s);
-                }
-                self.stack.push(StackValue::String(joined));
-            }
             Instruction::Stdout => {
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 match top {

@@ -22,7 +22,6 @@ pub enum Instruction {
     Dec,
     JmpIfZero(String),
     Label(String),
-    StrJoin,
     Stdout,
     Stderr,
     Sleep(u64),
@@ -77,10 +76,7 @@ impl<'a> ByteCodeGenerator<'a> {
             task.template.clone(),
         ));
         code.push(Instruction::Label(format!("loop_{}", task.name)));
-        code.push(Instruction::LoadVar("name".into()));
-        code.push(Instruction::Push(StackValue::String(" ".to_string())));
         code.push(Instruction::LoadVar("template".into()));
-        code.push(Instruction::StrJoin);
         match task.severity {
             Severity::Info => code.push(Instruction::Stdout),
             Severity::Error => code.push(Instruction::Stderr),
@@ -109,10 +105,7 @@ impl<'a> ByteCodeGenerator<'a> {
         code.push(Instruction::Dup);
         code.push(Instruction::JmpIfZero(format!("end_{}", task.name)));
         code.push(Instruction::Dec);
-        code.push(Instruction::LoadVar("name".into()));
-        code.push(Instruction::Push(StackValue::String(" ".to_string())));
         code.push(Instruction::LoadVar("template".into()));
-        code.push(Instruction::StrJoin);
         match task.severity {
             Severity::Info => code.push(Instruction::Stdout),
             Severity::Error => code.push(Instruction::Stderr),
@@ -154,10 +147,7 @@ mod tests {
         Dup                                   // Duplicate counter on stack
         JmpIfZero("loop_end")                 // Exit if counter is zero
         Dec                                   // Decrement the counter
-        LoadVar("name")                       // Load the name (was "test")
-        Push(" ")                             // Push separator
         LoadVar("template")                   // Load template
-        StrJoin                               // Join the strings
         Stdout                                // Print to stdout
         Sleep(1000)                           // Wait 1 second
         Jump("loop_start")                    // Jump back to loop start
@@ -165,7 +155,7 @@ mod tests {
         Pop                                   // Clean up counter from stack
         */
 
-        assert_eq!(code.len(), 16);
+        assert_eq!(code.len(), 13);
         assert_eq!(
             code[0],
             Instruction::StoreVar("name".to_string(), "test".to_string())
@@ -179,18 +169,12 @@ mod tests {
         assert_eq!(code[4], Instruction::Dup);
         assert_eq!(code[5], Instruction::JmpIfZero("end_test".to_string()));
         assert_eq!(code[6], Instruction::Dec);
-        assert_eq!(code[7], Instruction::LoadVar("name".to_string()));
-        assert_eq!(
-            code[8],
-            Instruction::Push(StackValue::String(" ".to_string()))
-        );
-        assert_eq!(code[9], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[10], Instruction::StrJoin);
-        assert_eq!(code[11], Instruction::Stdout);
-        assert_eq!(code[12], Instruction::Sleep(1000));
-        assert_eq!(code[13], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[14], Instruction::Label("end_test".to_string()));
-        assert_eq!(code[15], Instruction::Pop);
+        assert_eq!(code[7], Instruction::LoadVar("template".to_string()));
+        assert_eq!(code[8], Instruction::Stdout);
+        assert_eq!(code[9], Instruction::Sleep(1000));
+        assert_eq!(code[10], Instruction::Jump("loop_test".to_string()));
+        assert_eq!(code[11], Instruction::Label("end_test".to_string()));
+        assert_eq!(code[12], Instruction::Pop);
     }
 
     #[test]
@@ -212,17 +196,14 @@ mod tests {
         StoreVar("name", "test")              // Store task name
         StoreVar("template", "User logged in") // Store template
         Label("loop_start")                   // Loop start
-        LoadVar("name")                       // Load the name (was "test")
-        Push(" ")                             // Push separator
         LoadVar("template")                   // Load template
-        StrJoin                               // Join the strings
         Stdout                                // Print to stdout
         Sleep(1000)                           // Wait 1 second
         Jump("loop_start")                    // Jump back to loop start
         Label("loop_end")                     // Loop end
         */
 
-        assert_eq!(code.len(), 11);
+        assert_eq!(code.len(), 8);
         assert_eq!(
             code[0],
             Instruction::StoreVar("name".to_string(), "test".to_string())
@@ -232,17 +213,11 @@ mod tests {
             Instruction::StoreVar("template".to_string(), "User logged in".to_string())
         );
         assert_eq!(code[2], Instruction::Label("loop_test".to_string()));
-        assert_eq!(code[3], Instruction::LoadVar("name".to_string()));
-        assert_eq!(
-            code[4],
-            Instruction::Push(StackValue::String(" ".to_string()))
-        );
-        assert_eq!(code[5], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[6], Instruction::StrJoin);
-        assert_eq!(code[7], Instruction::Stdout);
-        assert_eq!(code[8], Instruction::Sleep(1000));
-        assert_eq!(code[9], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[10], Instruction::Label("end_test".to_string()));
+        assert_eq!(code[3], Instruction::LoadVar("template".to_string()));
+        assert_eq!(code[4], Instruction::Stdout);
+        assert_eq!(code[5], Instruction::Sleep(1000));
+        assert_eq!(code[6], Instruction::Jump("loop_test".to_string()));
+        assert_eq!(code[7], Instruction::Label("end_test".to_string()));
     }
 
     #[test]
@@ -274,7 +249,7 @@ mod tests {
         Label("loop_end")                     // Loop end
         */
 
-        assert_eq!(code.len(), 11);
+        assert_eq!(code.len(), 8);
         assert_eq!(
             code[0],
             Instruction::StoreVar("name".to_string(), "test".to_string())
@@ -284,16 +259,10 @@ mod tests {
             Instruction::StoreVar("template".to_string(), "User logged in".to_string())
         );
         assert_eq!(code[2], Instruction::Label("loop_test".to_string()));
-        assert_eq!(code[3], Instruction::LoadVar("name".to_string()));
-        assert_eq!(
-            code[4],
-            Instruction::Push(StackValue::String(" ".to_string()))
-        );
-        assert_eq!(code[5], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[6], Instruction::StrJoin);
-        assert_eq!(code[7], Instruction::Stderr);
-        assert_eq!(code[8], Instruction::Sleep(1000));
-        assert_eq!(code[9], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[10], Instruction::Label("end_test".to_string()));
+        assert_eq!(code[3], Instruction::LoadVar("template".to_string()));
+        assert_eq!(code[4], Instruction::Stderr);
+        assert_eq!(code[5], Instruction::Sleep(1000));
+        assert_eq!(code[6], Instruction::Jump("loop_test".to_string()));
+        assert_eq!(code[7], Instruction::Label("end_test".to_string()));
     }
 }

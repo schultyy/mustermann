@@ -21,6 +21,12 @@ pub enum Instruction {
     Dup,
     Jump(String),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ByteCodeError {
+    UnsupportedConst(String),
+}
+
 pub struct ByteCodeGenerator {
     config: Config,
 }
@@ -30,25 +36,63 @@ impl ByteCodeGenerator {
         Self { config }
     }
 
-    pub fn generate(&self) -> Vec<Instruction> {
+    pub fn generate(&self) -> Result<Vec<Instruction>, ByteCodeError> {
         let mut code = Vec::new();
         for task in &self.config.tasks {
-            code.extend_from_slice(&self.process_task(task));
+            match self.process_task(task) {
+                Ok(instructions) => code.extend_from_slice(&instructions),
+                Err(e) => return Err(e),
+            }
         }
-        code
+        Ok(code)
     }
 
-    fn process_task(&self, task: &Task) -> Vec<Instruction> {
+    fn process_task(&self, task: &Task) -> Result<Vec<Instruction>, ByteCodeError> {
+        match &task.count {
+            Count::Amount(_) => self.task_with_count(task),
+            Count::Const(val) => {
+                if val == "Infinite" {
+                    self.task_with_infinite_loop(task)
+                } else {
+                    Err(ByteCodeError::UnsupportedConst(val.clone()))
+                }
+            }
+        }
+    }
+
+    fn task_with_infinite_loop(&self, task: &Task) -> Result<Vec<Instruction>, ByteCodeError> {
         let mut code = Vec::new();
         code.push(Instruction::StoreVar("name".into(), task.name.clone()));
         code.push(Instruction::StoreVar(
             "template".into(),
             task.template.clone(),
         ));
-        match task.count {
-            Count::Amount(amount) => code.push(Instruction::Push(StackValue::Int(amount))),
-            Count::Const(_) => { /* unsupported */ }
-        }
+        code.push(Instruction::Label(format!("loop_{}", task.name)));
+        code.push(Instruction::LoadVar("name".into()));
+        code.push(Instruction::Push(StackValue::String(" ".to_string())));
+        code.push(Instruction::LoadVar("template".into()));
+        code.push(Instruction::StrJoin);
+        code.push(Instruction::Stdout);
+        code.push(Instruction::Sleep(task.frequency));
+        code.push(Instruction::Jump(format!("loop_{}", task.name)));
+        code.push(Instruction::Label(format!("end_{}", task.name)));
+        Ok(code)
+    }
+
+    fn task_with_count(&self, task: &Task) -> Result<Vec<Instruction>, ByteCodeError> {
+        let mut code = Vec::new();
+        code.push(Instruction::StoreVar("name".into(), task.name.clone()));
+        code.push(Instruction::StoreVar(
+            "template".into(),
+            task.template.clone(),
+        ));
+        let count = match &task.count {
+            Count::Amount(amount) => amount,
+            Count::Const(val) => {
+                return Err(ByteCodeError::UnsupportedConst(val.clone()));
+            }
+        };
+        code.push(Instruction::Push(StackValue::Int(*count)));
         code.push(Instruction::Label(format!("loop_{}", task.name)));
         code.push(Instruction::Dup);
         code.push(Instruction::JmpIfZero(format!("end_{}", task.name)));
@@ -62,7 +106,7 @@ impl ByteCodeGenerator {
         code.push(Instruction::Jump(format!("loop_{}", task.name)));
         code.push(Instruction::Label(format!("end_{}", task.name)));
         code.push(Instruction::Pop);
-        code
+        Ok(code)
     }
 }
 
@@ -85,7 +129,7 @@ mod tests {
             }],
         };
         let generator = ByteCodeGenerator::new(config);
-        let code = generator.generate();
+        let code = generator.generate().unwrap();
 
         /*
         StoreVar("name", "test")              // Store task name
@@ -104,7 +148,7 @@ mod tests {
         Jump("loop_start")                    // Jump back to loop start
         Label("loop_end")                     // Loop end
         Pop                                   // Clean up counter from stack
-                */
+        */
 
         assert_eq!(code.len(), 16);
         assert_eq!(
@@ -135,10 +179,54 @@ mod tests {
     }
 
     #[test]
-    fn test_generate() {
-        let config = Config::from_file("example.yml").unwrap();
+    fn test_generate_infinite_loop() {
+        let config = Config {
+            tasks: vec![Task {
+                name: "test".to_string(),
+                frequency: 1000,
+                count: Count::Const("Infinite".to_string()),
+                template: "User logged in".to_string(),
+                vars: vec![],
+                severity: Severity::Info,
+            }],
+        };
         let generator = ByteCodeGenerator::new(config);
-        let code = generator.generate();
-        println!("{:?}", code);
+        let code = generator.generate().unwrap();
+
+        /*
+        StoreVar("name", "test")              // Store task name
+        StoreVar("template", "User logged in") // Store template
+        Label("loop_start")                   // Loop start
+        LoadVar("name")                       // Load the name (was "test")
+        Push(" ")                             // Push separator
+        LoadVar("template")                   // Load template
+        StrJoin                               // Join the strings
+        Stdout                                // Print to stdout
+        Sleep(1000)                           // Wait 1 second
+        Jump("loop_start")                    // Jump back to loop start
+        Label("loop_end")                     // Loop end
+        */
+
+        assert_eq!(code.len(), 11);
+        assert_eq!(
+            code[0],
+            Instruction::StoreVar("name".to_string(), "test".to_string())
+        );
+        assert_eq!(
+            code[1],
+            Instruction::StoreVar("template".to_string(), "User logged in".to_string())
+        );
+        assert_eq!(code[2], Instruction::Label("loop_test".to_string()));
+        assert_eq!(code[3], Instruction::LoadVar("name".to_string()));
+        assert_eq!(
+            code[4],
+            Instruction::Push(StackValue::String(" ".to_string()))
+        );
+        assert_eq!(code[5], Instruction::LoadVar("template".to_string()));
+        assert_eq!(code[6], Instruction::StrJoin);
+        assert_eq!(code[7], Instruction::Stdout);
+        assert_eq!(code[8], Instruction::Sleep(1000));
+        assert_eq!(code[9], Instruction::Jump("loop_test".to_string()));
+        assert_eq!(code[10], Instruction::Label("end_test".to_string()));
     }
 }

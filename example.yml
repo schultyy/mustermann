@@ -6,11 +6,11 @@ tasks:
       - Franz Josef
       - 34
       - Heinz
-    severity: INFO
+    severity: Info
   - name: App Login Errors
     frequency: 45
     template: "Failed to login: %s"
     vars:
       - Invalid username or password
       - Upstream connection refused
-    severity: ERROR
+    severity: Error

@@ -45,13 +45,19 @@ impl std::fmt::Display for Frequency {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub enum Severity {
+    Info,
+    Error,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Task {
     pub name: String,
     pub frequency: Frequency,
     pub template: String,
     pub vars: Vec<String>,
-    pub severity: String,
+    pub severity: Severity,
 }
 
 #[cfg(test)]
@@ -101,7 +107,7 @@ mod tests {
                 "Upstream connection refused"
             ]
         );
-        assert_eq!(config.tasks[0].severity, "ERROR");
+        assert_eq!(config.tasks[0].severity, Severity::Error);
     }
 
     #[test]
@@ -113,6 +119,6 @@ mod tests {
         );
         assert_eq!(config.tasks[0].template, "User %s logged in");
         assert_eq!(config.tasks[0].vars, vec!["Franz Josef", "34", "Heinz"]);
-        assert_eq!(config.tasks[0].severity, "INFO");
+        assert_eq!(config.tasks[0].severity, Severity::Info);
     }
 }

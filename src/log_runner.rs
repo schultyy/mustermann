@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio::task::JoinHandle;
 
-use crate::config::{Config, Frequency, Task};
+use crate::config::{Config, Frequency, Severity, Task};
 
 #[derive(Debug)]
 pub enum LogRunnerError {
@@ -82,8 +82,7 @@ impl LogRunner {
             let mut index = 0;
             loop {
                 interval.tick().await;
-                let templated_string = interpolate(&task, index);
-                println!("{}", templated_string);
+                print_task(&task, index);
                 index += 1;
                 if index >= task.vars.len() {
                     index = 0;
@@ -104,15 +103,25 @@ impl LogRunner {
             let mut index = 0;
             loop {
                 interval.tick().await;
-                println!("Running infinite task");
-                let templated_string = interpolate(&task, index);
-                println!("{}", templated_string);
+                print_task(&task, index);
                 index += 1;
                 if index >= task.vars.len() {
                     index = 0;
                 }
             }
         });
+    }
+}
+
+fn print_task(task: &Task, index: usize) {
+    let templated_string = interpolate(&task, index);
+    match task.severity {
+        Severity::Info => {
+            tracing::info!(app_name = task.name, templated_string);
+        }
+        Severity::Error => {
+            tracing::error!(app_name = task.name, templated_string);
+        }
     }
 }
 

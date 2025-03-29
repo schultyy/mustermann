@@ -1,10 +1,13 @@
 use clap::Parser;
+use runtime_error::RuntimeError;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod log_runner;
 mod otel;
+mod runtime_error;
 mod vm;
+
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -32,8 +35,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .init();
     }
     let config = config::Config::from_file(&args.file_path)?;
-    let log_runner = log_runner::LogRunner::new(config);
-    log_runner.run().await?;
+    let mut handles = Vec::new();
+    for task in config.tasks {
+        let handle = tokio::spawn(async move { execute_config_task(&task) });
+        handles.push(handle);
+    }
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                tracing::error!("Error executing task: {}", e);
+            }
+            Err(e) => {
+                tracing::error!("Error executing task: {}", e);
+            }
+        }
+    }
+    Ok(())
+}
 
+fn execute_config_task(task: &config::Task) -> Result<(), RuntimeError> {
+    let byte_code = vm::ByteCodeGenerator::new(task).process_task()?;
+    let mut vm = vm::VM::new(byte_code);
+    vm.run()?;
     Ok(())
 }

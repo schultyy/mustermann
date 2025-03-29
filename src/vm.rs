@@ -27,15 +27,23 @@ pub struct VM {
     stack: Vec<StackValue>,
     vars: HashMap<String, StackValue>,
     ip: usize,
+    on_stdout: Box<dyn Fn(&str, &str) -> ()>, //name, message
+    on_stderr: Box<dyn Fn(&str, &str) -> ()>, //name, message
 }
 
 impl VM {
-    pub fn new(code: Vec<Instruction>) -> Self {
+    pub fn new(
+        code: Vec<Instruction>,
+        on_stdout: Box<dyn Fn(&str, &str) -> ()>,
+        on_stderr: Box<dyn Fn(&str, &str) -> ()>,
+    ) -> Self {
         Self {
             code,
             stack: Vec::new(),
             vars: HashMap::new(),
             ip: 0,
+            on_stdout,
+            on_stderr,
         }
     }
 
@@ -91,7 +99,7 @@ impl VM {
                 match top {
                     StackValue::String(s) => {
                         let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
-                        tracing::info!(app_name = name.to_string(), "{}", s);
+                        (self.on_stdout)(&name.to_string(), &s);
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
@@ -101,7 +109,7 @@ impl VM {
                 match top {
                     StackValue::String(s) => {
                         let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
-                        tracing::error!(app_name = name.to_string(), "{}", s);
+                        (self.on_stderr)(&name.to_string(), &s);
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
@@ -142,10 +150,18 @@ mod tests {
 
     #[test]
     fn test_vm_run() {
-        let mut vm = VM::new(vec![Instruction::StoreVar(
-            "name".to_string(),
-            "test".to_string(),
-        )]);
+        let mut vm = VM::new(
+            vec![Instruction::StoreVar(
+                "name".to_string(),
+                "test".to_string(),
+            )],
+            Box::new(|name, message| {
+                println!("{}: {}", name, message);
+            }),
+            Box::new(|name, message| {
+                println!("{}: {}", name, message);
+            }),
+        );
         vm.run().unwrap();
     }
 }

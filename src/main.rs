@@ -57,7 +57,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn execute_config_task(task: &config::Task) -> Result<(), RuntimeError> {
     let byte_code = ByteCodeGenerator::new(task).process_task()?;
-    let mut vm = vm::VM::new(byte_code);
+    let mut vm = vm::VM::new(byte_code, Box::new(on_stdout), Box::new(on_stderr));
     vm.run()?;
     Ok(())
+}
+
+fn on_stdout(name: &str, message: &str) -> () {
+    tracing::info!(app_name = name, message);
+}
+
+fn on_stderr(name: &str, message: &str) -> () {
+    tracing::error!(app_name = name, message);
 }

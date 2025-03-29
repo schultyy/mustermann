@@ -1,3 +1,4 @@
+use crate::code_gen::ByteCodeError;
 use crate::config;
 use crate::vm;
 
@@ -5,7 +6,7 @@ use crate::vm;
 pub enum RuntimeError {
     VMError(vm::VMError),
     ConfigError(config::ConfigError),
-    ByteCodeError(vm::ByteCodeError),
+    ByteCodeError(ByteCodeError),
 }
 
 impl std::error::Error for RuntimeError {}
@@ -32,8 +33,8 @@ impl From<config::ConfigError> for RuntimeError {
     }
 }
 
-impl From<vm::ByteCodeError> for RuntimeError {
-    fn from(e: vm::ByteCodeError) -> Self {
+impl From<ByteCodeError> for RuntimeError {
+    fn from(e: ByteCodeError) -> Self {
         RuntimeError::ByteCodeError(e)
     }
 }

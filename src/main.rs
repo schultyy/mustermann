@@ -1,7 +1,9 @@
 use clap::Parser;
+use code_gen::ByteCodeGenerator;
 use runtime_error::RuntimeError;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod code_gen;
 mod config;
 mod log_runner;
 mod otel;
@@ -55,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn execute_config_task(task: &config::Task) -> Result<(), RuntimeError> {
-    let byte_code = vm::ByteCodeGenerator::new(task).process_task()?;
+    let byte_code = ByteCodeGenerator::new(task).process_task()?;
     let mut vm = vm::VM::new(byte_code);
     vm.run()?;
     Ok(())

@@ -19,6 +19,7 @@ use tracing_subscriber::prelude::*;
 
 use opentelemetry::{trace::TracerProvider as _, KeyValue};
 
+mod config;
 mod logger;
 mod tracer;
 /// CLI tool for pattern matching

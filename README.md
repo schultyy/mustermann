@@ -16,44 +16,24 @@ Or install it from the [releases page](https://github.com/schultyy/mustermann/re
 
 ## Usage
 
-### Logging
+## Config Syntax
 
-Logging to stdout:
-
-```bash
-mustermann --log stdout
-```
-
-Logging to an OTLP backend (default endpoint is `http://localhost:4317`):
-
-```bash
-mustermann --log otlp
-```
-
-Logging to a custom OTLP endpoint:
-
-```bash
-mustermann --log otlp --otlp-endpoint http://other-host:4317
-```
-
-Set a custom log level via `RUST_LOG` (works for stdout and OTLP):
-
-```bash
-RUST_LOG=DEBUG mustermann --log stdout
-```
-
-### Tracing
-
-Tracing to an OTLP backend (default endpoint is `http://localhost:4317`):
-
-```bash
-mustermann --tracing
-```
-
-Tracing to a custom OTLP endpoint:
-
-```bash
-mustermann --tracing --otlp-endpoint http://other-host:4317
+```yaml
+- task_name: App Logs
+  frequency: infinite
+  template: "User %s logged in"
+  vars:
+    - Franz Josef
+    - 34
+    - Heinz
+  severity: INFO
+- task_name: App Login Errors
+  frequency: Amount(45)
+  template: "Failed to login: %s"
+  vars:
+    - Invalid username or password
+    - Upstream connection refused
+  severity: ERROR
 ```
 
 ## License

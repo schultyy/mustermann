@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::fs::File;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
-    pub tasks: Vec<Task>,
+    pub logs: Vec<Task>,
 }
 
 #[derive(Debug)]
@@ -67,7 +67,7 @@ mod tests {
 
     fn single_task_config() -> String {
         "
-        tasks:
+        logs:
           - name: App Login Errors
             frequency: 45
             count: 10
@@ -82,7 +82,7 @@ mod tests {
 
     fn infinite_frequency_config() -> String {
         "
-        tasks:
+        logs:
         - name: App Logs
           frequency: 45
           count: Infinite
@@ -99,28 +99,28 @@ mod tests {
     #[test]
     fn test_config_parse() {
         let config = serde_yaml::from_str::<Config>(&single_task_config()).unwrap();
-        assert_eq!(config.tasks.len(), 1);
-        assert_eq!(config.tasks[0].name, "App Login Errors");
-        assert_eq!(config.tasks[0].frequency, 45);
-        assert_eq!(config.tasks[0].count, Count::Amount(10));
-        assert_eq!(config.tasks[0].template, "Failed to login: %s");
+        assert_eq!(config.logs.len(), 1);
+        assert_eq!(config.logs[0].name, "App Login Errors");
+        assert_eq!(config.logs[0].frequency, 45);
+        assert_eq!(config.logs[0].count, Count::Amount(10));
+        assert_eq!(config.logs[0].template, "Failed to login: %s");
         assert_eq!(
-            config.tasks[0].vars,
+            config.logs[0].vars,
             vec![
                 "Invalid username or password",
                 "Upstream connection refused"
             ]
         );
-        assert_eq!(config.tasks[0].severity, Severity::Error);
+        assert_eq!(config.logs[0].severity, Severity::Error);
     }
 
     #[test]
     fn test_config_parse_infinite_frequency() {
         let config = serde_yaml::from_str::<Config>(&infinite_frequency_config()).unwrap();
-        assert_eq!(config.tasks[0].frequency, 45);
-        assert_eq!(config.tasks[0].count, Count::Const("Infinite".to_string()));
-        assert_eq!(config.tasks[0].template, "User %s logged in");
-        assert_eq!(config.tasks[0].vars, vec!["Franz Josef", "34", "Heinz"]);
-        assert_eq!(config.tasks[0].severity, Severity::Info);
+        assert_eq!(config.logs[0].frequency, 45);
+        assert_eq!(config.logs[0].count, Count::Const("Infinite".to_string()));
+        assert_eq!(config.logs[0].template, "User %s logged in");
+        assert_eq!(config.logs[0].vars, vec!["Franz Josef", "34", "Heinz"]);
+        assert_eq!(config.logs[0].severity, Severity::Info);
     }
 }

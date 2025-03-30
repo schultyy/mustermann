@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn test_config_parse() {
         let config = Config {
-            tasks: vec![Task {
+            logs: vec![Task {
                 name: "test".to_string(),
                 frequency: 1000,
                 count: Count::Amount(10),
@@ -176,7 +176,7 @@ mod tests {
                 severity: Severity::Info,
             }],
         };
-        let generator = ByteCodeGenerator::new(&config.tasks[0]);
+        let generator = ByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn test_counted_loop_with_vars() {
         let config = Config {
-            tasks: vec![Task {
+            logs: vec![Task {
                 name: "test".to_string(),
                 frequency: 1000,
                 count: Count::Amount(10),
@@ -229,7 +229,7 @@ mod tests {
                 severity: Severity::Info,
             }],
         };
-        let generator = ByteCodeGenerator::new(&config.tasks[0]);
+        let generator = ByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn test_generate_infinite_loop_with_single_var() {
         let config = Config {
-            tasks: vec![Task {
+            logs: vec![Task {
                 name: "test".to_string(),
                 frequency: 1000,
                 count: Count::Const("Infinite".to_string()),
@@ -289,7 +289,7 @@ mod tests {
                 severity: Severity::Info,
             }],
         };
-        let generator = ByteCodeGenerator::new(&config.tasks[0]);
+        let generator = ByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn test_generate_infinite_loop() {
         let config = Config {
-            tasks: vec![Task {
+            logs: vec![Task {
                 name: "test".to_string(),
                 frequency: 1000,
                 count: Count::Const("Infinite".to_string()),
@@ -341,7 +341,7 @@ mod tests {
                 severity: Severity::Info,
             }],
         };
-        let generator = ByteCodeGenerator::new(&config.tasks[0]);
+        let generator = ByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn test_print_stderr() {
         let config = Config {
-            tasks: vec![Task {
+            logs: vec![Task {
                 name: "test".to_string(),
                 frequency: 1000,
                 count: Count::Const("Infinite".to_string()),
@@ -384,7 +384,7 @@ mod tests {
                 severity: Severity::Error,
             }],
         };
-        let generator = ByteCodeGenerator::new(&config.tasks[0]);
+        let generator = ByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*

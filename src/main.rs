@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let config = config::Config::from_file(&args.file_path)?;
     let mut handles = Vec::new();
-    for task in config.tasks {
+    for task in config.logs {
         let handle = tokio::spawn(async move { execute_config_task(&task) });
         handles.push(handle);
     }

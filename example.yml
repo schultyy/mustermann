@@ -1,4 +1,4 @@
-tasks:
+logs:
   - name: App Logs
     frequency: 500
     count: Infinite

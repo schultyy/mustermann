@@ -132,6 +132,21 @@ impl VM {
                     .position(|i| i == &Instruction::Label(label.clone()))
                     .unwrap();
             }
+            Instruction::Printf => {
+                let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let template = match template {
+                    StackValue::String(s) => s,
+                    _ => return Err(VMError::InvalidStackValue),
+                };
+                let var = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let var = match var {
+                    StackValue::String(s) => s,
+                    _ => return Err(VMError::InvalidStackValue),
+                };
+
+                let formatted = template.replace("%s", &var);
+                self.stack.push(StackValue::String(formatted));
+            }
         }
         Ok(())
     }

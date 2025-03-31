@@ -1,4 +1,4 @@
-use crate::code_gen::ByteCodeError;
+use crate::code_gen::error::ByteCodeError;
 use crate::config;
 use crate::vm;
 

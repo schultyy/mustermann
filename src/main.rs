@@ -1,5 +1,5 @@
 use clap::Parser;
-use code_gen::LogByteCodeGenerator;
+use code_gen::log_byte_code::LogByteCodeGenerator;
 use runtime_error::RuntimeError;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

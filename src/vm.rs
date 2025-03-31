@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use crate::code_gen::{Instruction, StackValue};
-
+use crate::code_gen::instruction::{Instruction, StackValue};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VMError {
     StackUnderflow,

@@ -1,4 +1,4 @@
-use crate::config::{Count, Severity, Task};
+use crate::config::{Count, Method, Service, Severity, Task};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StackValue {
@@ -30,6 +30,7 @@ pub enum Instruction {
     Dup,
     Jump(String),
     Printf,
+    RemoteCall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,12 +48,78 @@ impl std::fmt::Display for ByteCodeError {
     }
 }
 
-pub struct ByteCodeGenerator<'a> {
+pub struct ServiceByteCodeGenerator<'a> {
+    service: &'a Service,
+}
+
+impl<'a> ServiceByteCodeGenerator<'a> {
+    pub fn new(service: &'a Service) -> Self {
+        Self { service }
+    }
+
+    pub fn process_service(&self) -> Result<Vec<Instruction>, ByteCodeError> {
+        let mut code = Vec::new();
+        code.push(Instruction::StoreVar(
+            "name".into(),
+            self.service.name.clone(),
+        ));
+        code.push(Instruction::Jump("main".into()));
+        for method in &self.service.methods {
+            let method_generator = MethodByteCodeGenerator::new(method);
+            let method_code = method_generator.process_method()?;
+            code.extend(method_code);
+        }
+
+        code.push(Instruction::Label("main".into()));
+        for method in &self.service.methods {
+            code.push(Instruction::Jump(format!("{}", method.name)));
+        }
+        code.push(Instruction::Label("end_main".into()));
+        Ok(code)
+    }
+}
+
+pub struct MethodByteCodeGenerator<'a> {
+    method: &'a Method,
+}
+
+impl<'a> MethodByteCodeGenerator<'a> {
+    pub fn new(method: &'a Method) -> Self {
+        Self { method }
+    }
+
+    pub fn process_method(&self) -> Result<Vec<Instruction>, ByteCodeError> {
+        let mut code = Vec::new();
+        code.push(Instruction::Label(format!("{}", self.method.name)));
+
+        if let Some(stdout) = &self.method.stdout {
+            code.push(Instruction::Push(StackValue::String(stdout.clone())));
+            code.push(Instruction::Stdout);
+        }
+
+        if let Some(sleep_ms) = self.method.sleep_ms {
+            code.push(Instruction::Sleep(sleep_ms));
+        }
+
+        if let Some(calls) = &self.method.calls {
+            for call in calls {
+                code.push(Instruction::Push(StackValue::String(call.name.clone())));
+                code.push(Instruction::Push(StackValue::String(call.method.clone())));
+                code.push(Instruction::RemoteCall);
+            }
+        }
+        code.push(Instruction::Jump("main".into()));
+        code.push(Instruction::Label(format!("end_{}", self.method.name)));
+
+        Ok(code)
+    }
+}
+pub struct LogByteCodeGenerator<'a> {
     task: &'a Task,
     has_vars: bool,
 }
 
-impl<'a> ByteCodeGenerator<'a> {
+impl<'a> LogByteCodeGenerator<'a> {
     pub fn new(task: &'a Task) -> Self {
         Self {
             task,
@@ -160,7 +227,7 @@ impl<'a> ByteCodeGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::Config;
+    use crate::config::{Call, Config, Method, Service};
 
     use super::*;
 
@@ -175,8 +242,9 @@ mod tests {
                 vars: vec![],
                 severity: Severity::Info,
             }],
+            services: vec![],
         };
-        let generator = ByteCodeGenerator::new(&config.logs[0]);
+        let generator = LogByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -228,8 +296,9 @@ mod tests {
                 vars: vec!["John".to_string()],
                 severity: Severity::Info,
             }],
+            services: vec![],
         };
-        let generator = ByteCodeGenerator::new(&config.logs[0]);
+        let generator = LogByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -288,8 +357,9 @@ mod tests {
                 vars: vec!["John".to_string()],
                 severity: Severity::Info,
             }],
+            services: vec![],
         };
-        let generator = ByteCodeGenerator::new(&config.logs[0]);
+        let generator = LogByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -340,8 +410,9 @@ mod tests {
                 vars: vec![],
                 severity: Severity::Info,
             }],
+            services: vec![],
         };
-        let generator = ByteCodeGenerator::new(&config.logs[0]);
+        let generator = LogByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -383,8 +454,9 @@ mod tests {
                 vars: vec![],
                 severity: Severity::Error,
             }],
+            services: vec![],
         };
-        let generator = ByteCodeGenerator::new(&config.logs[0]);
+        let generator = LogByteCodeGenerator::new(&config.logs[0]);
         let code = generator.process_task().unwrap();
 
         /*
@@ -416,5 +488,76 @@ mod tests {
         assert_eq!(code[5], Instruction::Sleep(1000));
         assert_eq!(code[6], Instruction::Jump("loop_test".to_string()));
         assert_eq!(code[7], Instruction::Label("end_test".to_string()));
+    }
+
+    #[test]
+    fn test_generate_services() {
+        let config = Config {
+            logs: vec![],
+            services: vec![Service {
+                name: "test".to_string(),
+                methods: vec![Method {
+                    name: "charge".to_string(),
+                    stdout: Some("Charging".to_string()),
+                    sleep_ms: Some(500),
+                    calls: Some(vec![Call {
+                        name: "checkout".to_string(),
+                        method: "process".to_string(),
+                    }]),
+                }],
+            }],
+        };
+
+        let generator = ServiceByteCodeGenerator::new(&config.services[0]);
+        let code = generator.process_service().unwrap();
+
+        /*
+        StoreVar("name", "test")              // Store task name
+        Jump("main")
+        ---
+        Label("charge")
+        Push("Charging")
+        Stdout
+        Sleep(500)
+        Label("end_charge")
+        Push("checkout")
+        Push("process")
+        RemoteCall
+        Jump("main")
+        ---
+        Label("main")
+        Jump("charge")
+        Jump("main")
+        Label("end_main")
+        */
+        assert_eq!(code.len(), 14);
+        assert_eq!(
+            code[0],
+            Instruction::StoreVar("name".to_string(), "test".to_string())
+        );
+        assert_eq!(code[1], Instruction::Jump("main".to_string()));
+        //--
+        assert_eq!(code[2], Instruction::Label("charge".to_string()));
+        assert_eq!(
+            code[3],
+            Instruction::Push(StackValue::String("Charging".to_string()))
+        );
+        assert_eq!(code[4], Instruction::Stdout);
+        assert_eq!(code[5], Instruction::Sleep(500));
+        assert_eq!(
+            code[6],
+            Instruction::Push(StackValue::String("checkout".to_string()))
+        );
+        assert_eq!(
+            code[7],
+            Instruction::Push(StackValue::String("process".to_string()))
+        );
+        assert_eq!(code[8], Instruction::RemoteCall);
+        assert_eq!(code[9], Instruction::Jump("main".to_string()));
+        assert_eq!(code[10], Instruction::Label("end_charge".to_string()));
+        //--
+        assert_eq!(code[11], Instruction::Label("main".to_string()));
+        assert_eq!(code[12], Instruction::Jump("charge".to_string()));
+        assert_eq!(code[13], Instruction::Label("end_main".to_string()));
     }
 }

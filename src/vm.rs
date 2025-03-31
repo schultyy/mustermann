@@ -147,6 +147,7 @@ impl VM {
                 let formatted = template.replace("%s", &var);
                 self.stack.push(StackValue::String(formatted));
             }
+            Instruction::RemoteCall => { /* Not Implemented */ }
         }
         Ok(())
     }

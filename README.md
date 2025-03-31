@@ -36,6 +36,26 @@ Or install it from the [releases page](https://github.com/schultyy/mustermann/re
   severity: ERROR
 ```
 
+## Services
+
+A service is an evolution of the log file. While logs are very much standalone, services are interconnected.
+I want to describe a service like this:
+
+```yaml
+services:
+  - name: payments
+    methods:
+      - name: charge
+        call: 
+          name: checkout
+          method: process
+    interval_ms: 500
+  - name: checkout
+    methods:
+      - name: process
+        stdout: Processing Order
+```
+
 ## License
 
 MIT

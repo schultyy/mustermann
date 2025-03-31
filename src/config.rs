@@ -3,6 +3,27 @@ use std::fs::File;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub logs: Vec<Task>,
+    pub services: Vec<Service>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Service {
+    pub name: String,
+    pub methods: Vec<Method>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Method {
+    pub name: String,
+    pub stdout: Option<String>,
+    pub sleep_ms: Option<u64>,
+    pub calls: Option<Vec<Call>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Call {
+    pub name: String,
+    pub method: String,
 }
 
 #[derive(Debug)]
@@ -67,6 +88,7 @@ mod tests {
 
     fn single_task_config() -> String {
         "
+        services: []
         logs:
           - name: App Login Errors
             frequency: 45
@@ -82,6 +104,7 @@ mod tests {
 
     fn infinite_frequency_config() -> String {
         "
+        services: []
         logs:
         - name: App Logs
           frequency: 45
@@ -92,6 +115,25 @@ mod tests {
             - 34
             - Heinz
           severity: Info
+        "
+        .to_string()
+    }
+
+    fn services_config() -> String {
+        "
+        logs: []
+        services:
+            - name: payments
+              methods:
+                - name: charge
+                  calls:
+                    - name: checkout
+                      method: process
+              sleep_ms: 500
+            - name: checkout
+              methods:
+                - name: process
+                  stdout: Processing Order
         "
         .to_string()
     }
@@ -122,5 +164,29 @@ mod tests {
         assert_eq!(config.logs[0].template, "User %s logged in");
         assert_eq!(config.logs[0].vars, vec!["Franz Josef", "34", "Heinz"]);
         assert_eq!(config.logs[0].severity, Severity::Info);
+    }
+
+    #[test]
+    fn test_config_parse_services() {
+        let config = serde_yaml::from_str::<Config>(&services_config()).unwrap();
+        assert_eq!(config.services.len(), 2);
+        assert_eq!(config.services[0].name, "payments");
+        assert_eq!(config.services[0].methods.len(), 1);
+        assert_eq!(config.services[0].methods[0].name, "charge");
+        assert_eq!(
+            config.services[0].methods[0].calls.as_ref().unwrap()[0].name,
+            "checkout"
+        );
+        assert_eq!(
+            config.services[0].methods[0].calls.as_ref().unwrap()[0].method,
+            "process"
+        );
+        assert_eq!(config.services[1].name, "checkout");
+        assert_eq!(config.services[1].methods.len(), 1);
+        assert_eq!(config.services[1].methods[0].name, "process");
+        assert_eq!(
+            config.services[1].methods[0].stdout,
+            Some("Processing Order".to_string())
+        );
     }
 }

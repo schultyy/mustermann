@@ -1,3 +1,4 @@
+services: []
 logs:
   - name: App Logs
     frequency: 500

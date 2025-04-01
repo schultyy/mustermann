@@ -88,10 +88,13 @@ impl VM {
             }
             Instruction::Stdout => {
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
                 match top {
                     StackValue::String(s) => {
-                        let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
                         (self.on_stdout)(&name.to_string(), &s);
+                    }
+                    StackValue::Int(n) => {
+                        (self.on_stdout)(&name.to_string(), &n.to_string());
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
@@ -146,7 +149,9 @@ impl VM {
                 let formatted = template.replace("%s", &var);
                 self.stack.push(StackValue::String(formatted));
             }
-            Instruction::RemoteCall => { /* Not Implemented */ }
+            Instruction::RemoteCall => {
+                println!("Remote call not implemented");
+            }
         }
         Ok(())
     }

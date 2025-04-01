@@ -1,0 +1,15 @@
+logs: []
+services:
+  - name: payments
+    methods:
+      - name: charge
+        stdout: Charging amount
+        calls:
+          - name: checkout
+            method: process
+        sleep_ms: 5000
+  - name: checkout
+    methods:
+      - name: process
+        stdout: Processing Order
+        sleep_ms: 5000

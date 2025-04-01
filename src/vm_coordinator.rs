@@ -1,10 +1,15 @@
 use std::collections::HashMap;
 
 use tokio::sync::mpsc;
+use tracing::{Level, Span};
 
 #[derive(Debug, Clone)]
 pub enum ServiceMessage {
-    Call { to: String, function: String },
+    Call {
+        to: String,
+        function: String,
+        parent: Span,
+    },
 }
 
 pub struct ServiceCoordinator {
@@ -17,7 +22,20 @@ pub struct ServiceCoordinator {
 impl ServiceCoordinator {
     async fn handle_remote_call(&self, msg: ServiceMessage) {
         match msg {
-            ServiceMessage::Call { to, function } => {
+            ServiceMessage::Call {
+                to,
+                function,
+                parent,
+            } => {
+                let span = tracing::span!(
+                    parent: &parent,
+                    Level::INFO,
+                    "remote_call",
+                    service.to = %to,
+                    service.function = %function,
+                );
+                let _guard = span.enter();
+
                 if let Some(service_tx) = self.services.get(&to) {
                     service_tx
                         .send(function)

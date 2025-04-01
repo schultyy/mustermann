@@ -185,6 +185,27 @@ impl VM {
                 if let Some(tx) = self.tx.as_ref() {
                     let method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                     let service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+
+                    //find last label in code
+                    let function_name = self
+                        .code
+                        .iter()
+                        .rev()
+                        .find(|i| matches!(i, Instruction::Label(_)))
+                        .unwrap();
+
+                    let function_name = match function_name {
+                        Instruction::Label(s) => s,
+                        _ => return Err(VMError::InvalidStackValue),
+                    };
+                    let root_span = tracing::info_span!(
+                        "vm_remote_call",
+                        service = %self.vars.get("name").unwrap(),
+                        method = %function_name,
+                    );
+
+                    let _guard = root_span.enter();
+
                     let service = match service {
                         StackValue::String(s) => s,
                         _ => return Err(VMError::InvalidStackValue),
@@ -197,9 +218,12 @@ impl VM {
                     tx.send(ServiceMessage::Call {
                         to: service,
                         function: method,
+                        parent: root_span.clone(),
                     })
                     .await
                     .or(Err(VMError::RemoteCallError))?;
+
+                    tracing::info!("Remote call initiated");
                 }
             }
         }

@@ -1,17 +1,11 @@
-use std::sync::Arc;
-
-use ::futures::future::{self, join_all};
+use ::futures::future::join_all;
 use clap::Parser;
 use code_gen::{log_byte_code::LogByteCodeGenerator, service_byte_code::ServiceByteCodeGenerator};
 use runtime_error::RuntimeError;
-use tokio::{
-    sync::{futures, mpsc},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use vm::VMError;
-use vm_coordinator::ServiceMessage;
 
 mod code_gen;
 mod config;
@@ -40,7 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
     if let Some(otel_endpoint) = args.otel_endpoint {
-        otel::setup_otlp_logger(&otel_endpoint, &args.service_name)?;
+        println!("Setting up otel: {}", otel_endpoint);
+        otel::setup_otlp(&otel_endpoint, &args.service_name)?;
     } else {
         tracing_subscriber::registry()
             .with(
@@ -57,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config_clone = config.clone();
         execute_services(config_clone).await?;
         let config_clone = config.clone();
-        execute_logs(config_clone).await;
+        execute_logs(config_clone).await?;
     }
     Ok(())
 }

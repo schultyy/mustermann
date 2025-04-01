@@ -4,7 +4,7 @@ services:
     methods:
       - name: process
         stdout: Processing Order
-        sleep_ms: 1000
+        sleep_ms: 10
   - name: payments
     methods:
       - name: charge
@@ -12,6 +12,6 @@ services:
         calls:
           - name: checkout
             method: process
-        sleep_ms: 1000
+        sleep_ms: 10
     invoke:
       - charge

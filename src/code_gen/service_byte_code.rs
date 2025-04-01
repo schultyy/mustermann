@@ -32,8 +32,9 @@ impl<'a> ServiceByteCodeGenerator<'a> {
             for method in invoke {
                 code.push(Instruction::Jump(format!("{}", method)));
             }
+        } else {
+            code.push(Instruction::Jump("main".into()));
         }
-
         code.push(Instruction::Label("end_main".into()));
         Ok(code)
     }

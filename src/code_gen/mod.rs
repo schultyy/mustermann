@@ -364,18 +364,7 @@ mod tests {
         let generator = ServiceByteCodeGenerator::new(&config.services[0]);
         let code = generator.process_service().unwrap();
 
-        /*
-        StoreVar("name", "test")              // Store task name
-        Jump("main")
-        Label("charge")
-        Push("Charging")
-        Stdout
-        Sleep(500)
-        Label("end_charge")
-        Jump("charge")
-        Label("end_main")
-        */
-        assert_eq!(code.len(), 10);
+        assert_eq!(code.len(), 11);
         assert_eq!(
             code[0],
             Instruction::StoreVar("name".to_string(), "test".to_string())
@@ -391,6 +380,7 @@ mod tests {
         assert_eq!(code[6], Instruction::Jump("main".to_string()));
         assert_eq!(code[7], Instruction::Label("end_charge".to_string()));
         assert_eq!(code[8], Instruction::Label("main".to_string()));
-        assert_eq!(code[9], Instruction::Label("end_main".to_string()));
+        assert_eq!(code[9], Instruction::Jump("main".to_string()));
+        assert_eq!(code[10], Instruction::Label("end_main".to_string()));
     }
 }

@@ -279,6 +279,7 @@ mod tests {
             logs: vec![],
             services: vec![Service {
                 name: "test".to_string(),
+                invoke: Some(vec!["charge".to_string()]),
                 methods: vec![Method {
                     name: "charge".to_string(),
                     stdout: Some("Charging".to_string()),
@@ -342,5 +343,54 @@ mod tests {
         assert_eq!(code[11], Instruction::Label("main".to_string()));
         assert_eq!(code[12], Instruction::Jump("charge".to_string()));
         assert_eq!(code[13], Instruction::Label("end_main".to_string()));
+    }
+
+    #[test]
+    fn test_generate_services_without_invoke() {
+        let config = Config {
+            logs: vec![],
+            services: vec![Service {
+                name: "test".to_string(),
+                invoke: None,
+                methods: vec![Method {
+                    name: "charge".to_string(),
+                    stdout: Some("Charging".to_string()),
+                    sleep_ms: Some(500),
+                    calls: None,
+                }],
+            }],
+        };
+
+        let generator = ServiceByteCodeGenerator::new(&config.services[0]);
+        let code = generator.process_service().unwrap();
+
+        /*
+        StoreVar("name", "test")              // Store task name
+        Jump("main")
+        Label("charge")
+        Push("Charging")
+        Stdout
+        Sleep(500)
+        Label("end_charge")
+        Jump("charge")
+        Label("end_main")
+        */
+        assert_eq!(code.len(), 10);
+        assert_eq!(
+            code[0],
+            Instruction::StoreVar("name".to_string(), "test".to_string())
+        );
+        assert_eq!(code[1], Instruction::Jump("main".to_string()));
+        assert_eq!(code[2], Instruction::Label("charge".to_string()));
+        assert_eq!(
+            code[3],
+            Instruction::Push(StackValue::String("Charging".to_string()))
+        );
+        assert_eq!(code[4], Instruction::Stdout);
+        assert_eq!(code[5], Instruction::Sleep(500));
+        assert_eq!(code[6], Instruction::Jump("main".to_string()));
+        assert_eq!(code[7], Instruction::Label("end_charge".to_string()));
+        assert_eq!(code[8], Instruction::Label("main".to_string()));
+        assert_eq!(code[9], Instruction::Label("end_main".to_string()));
     }
 }

@@ -13,3 +13,5 @@ services:
       - name: process
         stdout: Processing Order
         sleep_ms: 5000
+    invoke:
+      - process

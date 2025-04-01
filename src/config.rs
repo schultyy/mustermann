@@ -10,6 +10,7 @@ pub struct Config {
 pub struct Service {
     pub name: String,
     pub methods: Vec<Method>,
+    pub invoke: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -130,6 +131,8 @@ mod tests {
                     - name: checkout
                       method: process
               sleep_ms: 500
+              invoke:
+                - charge
             - name: checkout
               methods:
                 - name: process
@@ -173,6 +176,7 @@ mod tests {
         assert_eq!(config.services[0].name, "payments");
         assert_eq!(config.services[0].methods.len(), 1);
         assert_eq!(config.services[0].methods[0].name, "charge");
+        assert_eq!(config.services[0].invoke, Some(vec!["charge".to_string()]));
         assert_eq!(
             config.services[0].methods[0].calls.as_ref().unwrap()[0].name,
             "checkout"
@@ -188,5 +192,6 @@ mod tests {
             config.services[1].methods[0].stdout,
             Some("Processing Order".to_string())
         );
+        assert_eq!(config.services[1].invoke, None);
     }
 }

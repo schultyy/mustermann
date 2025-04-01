@@ -28,9 +28,12 @@ impl<'a> ServiceByteCodeGenerator<'a> {
         }
 
         code.push(Instruction::Label("main".into()));
-        for method in &self.service.methods {
-            code.push(Instruction::Jump(format!("{}", method.name)));
+        if let Some(invoke) = &self.service.invoke {
+            for method in invoke {
+                code.push(Instruction::Jump(format!("{}", method)));
+            }
         }
+
         code.push(Instruction::Label("end_main".into()));
         Ok(code)
     }

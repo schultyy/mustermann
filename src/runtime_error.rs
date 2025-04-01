@@ -1,3 +1,5 @@
+use tokio::task::JoinError;
+
 use crate::code_gen::error::ByteCodeError;
 use crate::config;
 use crate::vm;
@@ -7,6 +9,7 @@ pub enum RuntimeError {
     VMError(vm::VMError),
     ConfigError(config::ConfigError),
     ByteCodeError(ByteCodeError),
+    ServiceError(JoinError),
 }
 
 impl std::error::Error for RuntimeError {}
@@ -17,7 +20,14 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::VMError(e) => write!(f, "VM error: {}", e),
             RuntimeError::ConfigError(e) => write!(f, "Config error: {}", e),
             RuntimeError::ByteCodeError(e) => write!(f, "Byte code error: {}", e),
+            RuntimeError::ServiceError(e) => write!(f, "Service error: {}", e),
         }
+    }
+}
+
+impl From<JoinError> for RuntimeError {
+    fn from(e: JoinError) -> Self {
+        RuntimeError::ServiceError(e)
     }
 }
 

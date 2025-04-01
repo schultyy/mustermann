@@ -1,5 +1,10 @@
 logs: []
 services:
+  - name: checkout
+    methods:
+      - name: process
+        stdout: Processing Order
+        sleep_ms: 1000
   - name: payments
     methods:
       - name: charge
@@ -7,11 +12,6 @@ services:
         calls:
           - name: checkout
             method: process
-        sleep_ms: 5000
-  - name: checkout
-    methods:
-      - name: process
-        stdout: Processing Order
-        sleep_ms: 5000
+        sleep_ms: 1000
     invoke:
-      - process
+      - charge

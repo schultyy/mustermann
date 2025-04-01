@@ -1,13 +1,24 @@
+use std::sync::Arc;
+
+use ::futures::future::{self, join_all};
 use clap::Parser;
 use code_gen::{log_byte_code::LogByteCodeGenerator, service_byte_code::ServiceByteCodeGenerator};
 use runtime_error::RuntimeError;
+use tokio::{
+    sync::{futures, mpsc},
+    task::JoinHandle,
+};
+
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use vm::VMError;
+use vm_coordinator::ServiceMessage;
 
 mod code_gen;
 mod config;
 mod otel;
 mod runtime_error;
 mod vm;
+mod vm_coordinator;
 
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
@@ -80,64 +91,39 @@ fn print_code(config: &config::Config) {
 }
 
 async fn execute_services(config: config::Config) -> Result<(), RuntimeError> {
-    let mut handles = Vec::new();
+    let mut coordinator = vm_coordinator::ServiceCoordinator::new();
+    let mut handles: Vec<JoinHandle<Result<(), VMError>>> = Vec::new();
     for service in config.services {
-        let service_clone = service.clone();
-        let handle = tokio::spawn(async move { execute_config_service(service_clone) });
-        handles.push(handle);
+        let (tx, rx) = mpsc::channel(1000);
+
+        coordinator.add_service(service.name.clone(), tx.clone());
+        let coordinator_tx = coordinator.get_main_tx();
+        let byte_code = ServiceByteCodeGenerator::new(&service).process_service()?;
+        handles.push(tokio::spawn(async move {
+            let mut vm = vm::VM::new(byte_code, Some(coordinator_tx), Some(rx));
+            return vm.run().await;
+        }));
     }
-    for handle in handles {
-        match handle.await {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => {
-                tracing::error!("Error executing service: {}", e);
-            }
-            Err(e) => {
-                tracing::error!("Error executing service: {}", e);
-            }
-        }
-    }
+
+    let coordinator_handle: JoinHandle<Result<(), VMError>> = tokio::spawn(async move {
+        coordinator.run().await;
+        Ok(())
+    });
+    handles.push(coordinator_handle);
+    join_all(handles).await;
     Ok(())
 }
 
-fn execute_config_service(service: config::Service) -> Result<(), RuntimeError> {
-    let byte_code = ServiceByteCodeGenerator::new(&service).process_service()?;
-    let mut vm = vm::VM::new(byte_code, Box::new(on_stdout), Box::new(on_stderr));
-    println!("Running service: {}", service.name);
-    vm.run()?;
-    Ok(())
-}
-
-async fn execute_logs(config: config::Config) {
-    let mut handles = Vec::new();
+async fn execute_logs(config: config::Config) -> Result<(), RuntimeError> {
     for task in config.logs {
-        let handle = tokio::spawn(async move { execute_config_task(&task) });
-        handles.push(handle);
+        execute_config_task(&task).await?;
     }
-    for handle in handles {
-        match handle.await {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => {
-                tracing::error!("Error executing task: {}", e);
-            }
-            Err(e) => {
-                tracing::error!("Error executing task: {}", e);
-            }
-        }
-    }
-}
-
-fn execute_config_task(task: &config::Task) -> Result<(), RuntimeError> {
-    let byte_code = LogByteCodeGenerator::new(task).process_task()?;
-    let mut vm = vm::VM::new(byte_code, Box::new(on_stdout), Box::new(on_stderr));
-    vm.run()?;
     Ok(())
 }
 
-fn on_stdout(name: &str, message: &str) -> () {
-    tracing::info!(app_name = name, message);
-}
-
-fn on_stderr(name: &str, message: &str) -> () {
-    tracing::error!(app_name = name, message);
+async fn execute_config_task(task: &config::Task) -> Result<(), RuntimeError> {
+    let byte_code = LogByteCodeGenerator::new(task).process_task()?;
+    let mut vm = vm::VM::new(byte_code, None, None);
+    vm.run().await?;
+    Ok(())
 }

@@ -1,12 +1,19 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::code_gen::instruction::{Instruction, StackValue};
+use tokio::sync::mpsc;
+
+use crate::{
+    code_gen::instruction::{Instruction, StackValue},
+    vm_coordinator::ServiceMessage,
+};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VMError {
     StackUnderflow,
     InvalidStackValue,
     MissingAppName,
     MissingVar(String),
+    RemoteCallError,
+    MissingLabel(String),
 }
 
 impl std::error::Error for VMError {}
@@ -18,44 +25,69 @@ impl std::fmt::Display for VMError {
             VMError::InvalidStackValue => write!(f, "Invalid stack value"),
             VMError::MissingAppName => write!(f, "Missing app name"),
             VMError::MissingVar(var) => write!(f, "Missing variable: {}", var),
+            VMError::RemoteCallError => write!(f, "Remote call error"),
+            VMError::MissingLabel(label) => write!(f, "Missing label: {}", label),
         }
     }
 }
+
 pub struct VM {
     code: Vec<Instruction>,
     stack: Vec<StackValue>,
     vars: HashMap<String, StackValue>,
     ip: usize,
-    on_stdout: Box<dyn Fn(&str, &str) -> ()>, //name, message
-    on_stderr: Box<dyn Fn(&str, &str) -> ()>, //name, message
+    // on_stdout: Arc<Box<dyn Fn(&str, &str) -> ()>>, //name, message
+    // on_stderr: Arc<Box<dyn Fn(&str, &str) -> ()>>, //name, message
+    tx: Option<mpsc::Sender<ServiceMessage>>,
+    rx: Option<mpsc::Receiver<String>>,
+    message_check_counter: usize,
 }
 
 impl VM {
     pub fn new(
         code: Vec<Instruction>,
-        on_stdout: Box<dyn Fn(&str, &str) -> ()>,
-        on_stderr: Box<dyn Fn(&str, &str) -> ()>,
+        tx: Option<mpsc::Sender<ServiceMessage>>,
+        rx: Option<mpsc::Receiver<String>>,
     ) -> Self {
         Self {
             code,
             stack: Vec::new(),
             vars: HashMap::new(),
             ip: 0,
-            on_stdout,
-            on_stderr,
+            tx,
+            rx,
+            message_check_counter: 0,
         }
     }
 
-    pub fn run(&mut self) -> Result<(), VMError> {
+    pub async fn run(&mut self) -> Result<(), VMError> {
         while self.ip < self.code.len() {
             let instruction = self.code[self.ip].clone();
             self.ip += 1;
-            self.execute_instruction(instruction)?;
+            self.message_check_counter += 1;
+            if self.message_check_counter > 10000 {
+                if let Some(rx) = &mut self.rx {
+                    if let Ok(msg) = rx.try_recv() {
+                        self.handle_service_message(msg)?;
+                    }
+                }
+                self.message_check_counter = 0;
+            }
+            self.execute_instruction(instruction).await?;
         }
         Ok(())
     }
 
-    fn execute_instruction(&mut self, instruction: Instruction) -> Result<(), VMError> {
+    fn handle_service_message(&mut self, msg: String) -> Result<(), VMError> {
+        self.ip = self
+            .code
+            .iter()
+            .position(|i| i == &Instruction::Label(msg.clone()))
+            .ok_or(VMError::MissingLabel(msg.clone()))?;
+        Ok(())
+    }
+
+    async fn execute_instruction(&mut self, instruction: Instruction) -> Result<(), VMError> {
         match instruction {
             Instruction::Push(stack_value) => {
                 self.stack.push(stack_value.to_owned());
@@ -91,10 +123,10 @@ impl VM {
                 let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
                 match top {
                     StackValue::String(s) => {
-                        (self.on_stdout)(&name.to_string(), &s);
+                        tracing::info!("{}: {}", name, s);
                     }
                     StackValue::Int(n) => {
-                        (self.on_stdout)(&name.to_string(), &n.to_string());
+                        tracing::info!("{}: {}", name, n);
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
@@ -104,7 +136,7 @@ impl VM {
                 match top {
                     StackValue::String(s) => {
                         let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
-                        (self.on_stderr)(&name.to_string(), &s);
+                        tracing::error!("{}: {}", name, s);
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
@@ -132,7 +164,7 @@ impl VM {
                     .code
                     .iter()
                     .position(|i| i == &Instruction::Label(label.clone()))
-                    .unwrap();
+                    .ok_or(VMError::MissingLabel(label.clone()))?;
             }
             Instruction::Printf => {
                 let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
@@ -150,7 +182,25 @@ impl VM {
                 self.stack.push(StackValue::String(formatted));
             }
             Instruction::RemoteCall => {
-                println!("Remote call not implemented");
+                if let Some(tx) = self.tx.as_ref() {
+                    let method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                    let service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                    let service = match service {
+                        StackValue::String(s) => s,
+                        _ => return Err(VMError::InvalidStackValue),
+                    };
+                    let method = match method {
+                        StackValue::String(s) => s,
+                        _ => return Err(VMError::InvalidStackValue),
+                    };
+
+                    tx.send(ServiceMessage::Call {
+                        to: service,
+                        function: method,
+                    })
+                    .await
+                    .or(Err(VMError::RemoteCallError))?;
+                }
             }
         }
         Ok(())
@@ -161,20 +211,16 @@ impl VM {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_vm_run() {
+    #[tokio::test]
+    async fn test_vm_run() {
         let mut vm = VM::new(
             vec![Instruction::StoreVar(
                 "name".to_string(),
                 "test".to_string(),
             )],
-            Box::new(|name, message| {
-                println!("{}: {}", name, message);
-            }),
-            Box::new(|name, message| {
-                println!("{}: {}", name, message);
-            }),
+            None,
+            None,
         );
-        vm.run().unwrap();
+        vm.run().await.unwrap();
     }
 }

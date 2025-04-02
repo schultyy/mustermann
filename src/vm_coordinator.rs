@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::{Span, SpanKind, Status, Tracer};
+use opentelemetry::trace::{FutureExt, Span, SpanKind, Status, Tracer};
 use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
 use opentelemetry_sdk::trace;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
@@ -24,7 +24,7 @@ pub enum ServiceMessage {
     Call {
         to: String,
         function: String,
-        metadata: HashMap<String, String>,
+        context: opentelemetry::Context,
     },
 }
 
@@ -46,16 +46,14 @@ impl ServiceCoordinator {
             ServiceMessage::Call {
                 to,
                 function,
-                metadata,
+                context,
             } => {
-                let parent_cx = global::get_text_map_propagator(|prop| {
-                    prop.extract(&MetadataExtractor(&metadata))
-                });
                 let tracer = global::tracer(to.clone());
                 let mut span = tracer
                     .span_builder(format!("{}/{}", to.clone(), function))
                     .with_kind(SpanKind::Server)
-                    .start_with_context(&tracer, &parent_cx);
+                    .start_with_context(&tracer, &context);
+
                 span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
 
                 if let Some(service) = self.services.get(&to) {
@@ -63,7 +61,7 @@ impl ServiceCoordinator {
                     let mut span = tracer
                         .span_builder(format!("{}/{}", to.clone(), function))
                         .with_kind(SpanKind::Server)
-                        .start_with_context(&tracer, &parent_cx);
+                        .start_with_context(&tracer, &context);
                     span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
 
                     service

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use opentelemetry::trace::FutureExt;
 use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
 use opentelemetry::{
     trace::{SpanKind, TraceContextExt, Tracer},
@@ -7,11 +8,12 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, TracerProvider};
+use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, Span, TracerProvider};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
 use tonic::metadata::{MetadataMap, MetadataValue};
+use tracing::Instrument;
 
 use crate::{
     code_gen::instruction::{Instruction, StackValue},
@@ -25,6 +27,7 @@ pub enum VMError {
     MissingVar(String),
     RemoteCallError,
     MissingLabel(String),
+    MissingSpan,
 }
 
 impl std::error::Error for VMError {}
@@ -38,6 +41,7 @@ impl std::fmt::Display for VMError {
             VMError::MissingVar(var) => write!(f, "Missing variable: {}", var),
             VMError::RemoteCallError => write!(f, "Remote call error"),
             VMError::MissingLabel(label) => write!(f, "Missing label: {}", label),
+            VMError::MissingSpan => write!(f, "Missing span"),
         }
     }
 }
@@ -53,6 +57,7 @@ pub struct VM {
     rx: Option<mpsc::Receiver<String>>,
     message_check_counter: usize,
     tracer: Option<TracerProvider>,
+    context: Option<Context>,
 }
 
 pub fn setup_tracer(
@@ -104,6 +109,7 @@ impl VM {
             stack: Vec::new(),
             vars: HashMap::new(),
             ip: 0,
+            context: None,
             tx,
             rx,
             message_check_counter: 0,
@@ -250,17 +256,18 @@ impl VM {
 
                     let service_name = self.vars.get("name").unwrap();
                     let service_name = service_name.to_string();
-                    let mut metadata = HashMap::new();
                     if let Some(tracer_provider) = self.tracer.as_ref() {
-                        let tracer = tracer_provider.tracer(service_name.clone());
-                        let span = tracer
-                            .span_builder(format!("{}/{}", service_name, function_name))
-                            .with_kind(SpanKind::Server)
-                            .start(&tracer);
-                        let cx = Context::current_with_span(span);
-                        global::get_text_map_propagator(|propagator| {
-                            propagator.inject_context(&cx, &mut metadata)
-                        });
+                        if let Some(otel_cx) = self.context.as_ref() {
+                            let tracer = tracer_provider.tracer(service_name.clone());
+                            let _span = tracer
+                                .span_builder(format!("{}/{}", service_name, function_name))
+                                .with_kind(SpanKind::Server)
+                                .with_context(otel_cx.clone());
+                            // let cx = Context::current_with_span(span);
+                            // global::get_text_map_propagator(|propagator| {
+                            //     propagator.inject_context(&cx, &mut metadata)
+                            // });
+                        }
                     }
 
                     let service = match service {
@@ -275,7 +282,7 @@ impl VM {
                     tx.send(ServiceMessage::Call {
                         to: service,
                         function: method,
-                        metadata,
+                        context: self.context.clone().unwrap_or_else(|| Context::current()),
                     })
                     .await
                     .or(Err(VMError::RemoteCallError))?;
@@ -283,6 +290,31 @@ impl VM {
                     tracing::info!("Remote call initiated");
                 }
             }
+            Instruction::StartContext => {
+                if let Some(tracer_provider) = self.tracer.as_ref() {
+                    let service_name = self.vars.get("name").unwrap();
+                    let service_name = service_name.to_string();
+                    let mut metadata = HashMap::new();
+                    let tracer = tracer_provider.tracer(service_name.clone());
+                    let span = tracer
+                        .span_builder(format!("{}/{}", service_name, "start_context"))
+                        .with_kind(SpanKind::Server)
+                        .start(&tracer);
+                    let cx = Context::current_with_span(span);
+                    global::get_text_map_propagator(|propagator| {
+                        propagator.inject_context(&cx, &mut metadata)
+                    });
+                    self.context = Some(cx);
+                }
+            }
+            Instruction::EndContext => match self.context.as_mut() {
+                Some(_) => {
+                    self.context = None;
+                }
+                None => {
+                    return Err(VMError::MissingSpan);
+                }
+            },
         }
         Ok(())
     }

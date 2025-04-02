@@ -63,11 +63,13 @@ impl<'a> MethodByteCodeGenerator<'a> {
         }
 
         if let Some(calls) = &self.method.calls {
+            code.push(Instruction::StartContext);
             for call in calls {
                 code.push(Instruction::Push(StackValue::String(call.name.clone())));
                 code.push(Instruction::Push(StackValue::String(call.method.clone())));
                 code.push(Instruction::RemoteCall);
             }
+            code.push(Instruction::EndContext);
         }
         code.push(Instruction::Jump("main".into()));
         code.push(Instruction::Label(format!("end_{}", self.method.name)));

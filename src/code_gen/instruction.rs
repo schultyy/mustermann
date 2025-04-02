@@ -29,6 +29,8 @@ pub enum Instruction {
     Jump(String),
     Printf,
     RemoteCall,
+    StartContext,
+    EndContext,
 }
 
 impl std::fmt::Display for Instruction {
@@ -48,6 +50,8 @@ impl std::fmt::Display for Instruction {
             Instruction::Jump(label) => write!(f, "Jump({})", label),
             Instruction::Printf => write!(f, "Printf"),
             Instruction::RemoteCall => write!(f, "RemoteCall"),
+            Instruction::StartContext => write!(f, "StartContext"),
+            Instruction::EndContext => write!(f, "EndContext"),
         }
     }
 }

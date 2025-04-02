@@ -1,172 +1,134 @@
-use clap::{Parser, ValueEnum};
+use ::futures::future::join_all;
+use clap::Parser;
+use code_gen::{log_byte_code::LogByteCodeGenerator, service_byte_code::ServiceByteCodeGenerator};
+use runtime_error::RuntimeError;
+use tokio::{sync::mpsc, task::JoinHandle};
 
-use logger::log_demo_data;
-use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig};
-use opentelemetry_sdk::{
-    self,
-    logs::LoggerProvider,
-    runtime,
-    trace::{self, RandomIdGenerator},
-    Resource,
-};
-use tonic::metadata::{MetadataMap, MetadataValue};
-use tracer::simulate_checkout_process;
-use tracing::{debug, info, Level};
-use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::prelude::*;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use vm::VMError;
 
-use opentelemetry::{trace::TracerProvider as _, KeyValue};
+mod code_gen;
+mod config;
+mod metadata_map;
+mod otel;
+mod runtime_error;
+mod vm;
+mod vm_coordinator;
 
-mod logger;
-mod tracer;
 /// CLI tool for pattern matching
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// OTLP endpoint URL when using OTLP logging
-    #[arg(short, long, default_value = "http://localhost:4317")]
-    otlp_endpoint: String,
-    /// Enable logging and specify the output destination
-    #[arg(long, value_enum)]
-    log: Option<LogOutput>,
-
-    /// Enable metrics collection
-    #[arg(long, default_value_t = false)]
-    metrics: bool,
-
-    /// Enable tracing
-    #[arg(long, default_value_t = false)]
-    tracing: bool,
-}
-
-/// Logging output destinations
-#[derive(Debug, Clone, ValueEnum, PartialEq, Eq)]
-enum LogOutput {
-    /// Log to standard output
-    Stdout,
-    /// Log to OpenTelemetry Protocol (OTLP) endpoint
-    Otlp,
-}
-
-fn setup_otlp_logger(endpoint: &str) -> Result<LoggerProvider, Box<dyn std::error::Error>> {
-    let exporter = LogExporter::builder()
-        .with_tonic()
-        .with_endpoint(endpoint)
-        .with_metadata(MetadataMap::new())
-        .build()?;
-    let logger_provider = LoggerProvider::builder()
-        .with_batch_exporter(exporter, runtime::Tokio)
-        .build();
-    let layer = OpenTelemetryTracingBridge::new(&logger_provider);
-
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::filter::EnvFilter::from_default_env())
-        .with(layer)
-        .init();
-    Ok(logger_provider)
-}
-
-fn setup_tracer(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut map = MetadataMap::with_capacity(3);
-
-    map.insert("x-application", "mustermann".parse().unwrap());
-    map.insert_bin(
-        "trace-proto-bin",
-        MetadataValue::from_bytes(b"[binary data]"),
-    );
-
-    let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(endpoint)
-        .with_metadata(map)
-        .build()?;
-
-    // Then pass it into provider builder
-    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
-        .with_batch_exporter(otlp_exporter, opentelemetry_sdk::runtime::Tokio)
-        .with_config(
-            trace::Config::default()
-                // .with_sampler(Sampler::AlwaysOn)
-                .with_id_generator(RandomIdGenerator::default())
-                .with_max_events_per_span(64)
-                .with_max_attributes_per_span(16)
-                .with_max_events_per_span(16)
-                .with_resource(Resource::new(vec![KeyValue::new(
-                    "service.name",
-                    "mustermann",
-                )])),
-        )
-        .build();
-    let tracer = provider.tracer("mustermann_root_tracer");
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::filter::LevelFilter::from_level(
-            Level::INFO,
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .with(OpenTelemetryLayer::new(tracer))
-        .init();
-    Ok(())
+    /// Enable debug mode
+    #[arg(short, long)]
+    print_code: bool,
+    /// The path to the config file
+    file_path: String,
+    otel_endpoint: Option<String>,
+    /// The name of the service to be used in the logs. Defaults to "mustermann"
+    #[arg(short, long, default_value = "mustermann")]
+    service_name: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
-    let mut logger_provider: Option<LoggerProvider> = None;
-
-    // Configure logging based on the selected output
-    match args.log {
-        Some(LogOutput::Stdout) => {
-            tracing_subscriber::registry()
-                .with(tracing_subscriber::filter::EnvFilter::from_default_env())
-                .with(tracing_subscriber::fmt::layer())
-                .init();
-
-            info!("Logging initialized with stdout output");
-        }
-        Some(LogOutput::Otlp) => {
-            // This is a stub for now
-            logger_provider = Some(setup_otlp_logger(&args.otlp_endpoint)?);
-            info!("OTLP initialized");
-        }
-        None => {}
-    }
-
-    // Log feature activation status
-    if let Some(log_output) = &args.log {
-        info!("Logging enabled with {:?} output", log_output);
-    }
-
-    if args.metrics {
-        info!("Metrics will come soon :rocket:");
-        // Stub for metrics implementation
-    }
-
-    if args.tracing {
-        info!("Tracing enabled");
-        // Stub for tracing implementation
-        setup_tracer(&args.otlp_endpoint)?;
-        tracer::run_checkout_simulation();
-        simulate_checkout_process();
-    }
-
-    // Generate some demo log data if stdout logging is enabled
-    if args.log == Some(LogOutput::Stdout) {
-        debug!("This is a debug message (only visible with --verbose)");
-        info!("This is an info message");
-
-        log_demo_data()
-    } else if args.log == Some(LogOutput::Otlp) {
-        log_demo_data()
+    if let Some(otel_endpoint) = args.otel_endpoint.clone() {
+        println!("Setting up otel: {}", otel_endpoint);
+        otel::setup_otlp(&otel_endpoint, &args.service_name)?;
     } else {
-        eprintln!("No CLI arguments provided");
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
+    let file_path = args.file_path.clone();
+    let config = config::Config::from_file(&file_path)?;
+    if args.print_code {
+        print_code(&config);
+    } else {
+        let config_clone = config.clone();
+        execute_services(&args, config_clone).await?;
+        let config_clone = config.clone();
+        execute_logs(config_clone).await?;
+    }
+    Ok(())
+}
+
+fn print_code(config: &config::Config) {
+    for log in &config.logs {
+        let code = LogByteCodeGenerator::new(log).process_task().unwrap();
+        println!(
+            "{}",
+            code.iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<String>>()
+                .join("\n")
+        );
+    }
+    for service in &config.services {
+        let code = ServiceByteCodeGenerator::new(service)
+            .process_service()
+            .unwrap();
+        println!("Service: {}", service.name);
+        println!("--------------------------------");
+        println!(
+            "{}",
+            code.iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<String>>()
+                .join("\n")
+        );
+        println!("--------------------------------");
+    }
+}
+
+async fn execute_services(args: &Args, config: config::Config) -> Result<(), RuntimeError> {
+    let mut coordinator = vm_coordinator::ServiceCoordinator::new();
+    let mut handles: Vec<JoinHandle<Result<(), VMError>>> = Vec::new();
+    let otel_endpoint = args
+        .otel_endpoint
+        .clone()
+        .unwrap_or("http://localhost:4317".to_string());
+    for service in config.services {
+        let (tx, rx) = mpsc::channel(1000);
+        let tracer = vm::setup_tracer(&otel_endpoint, &service.name)
+            .map_err(|e| RuntimeError::InitTraceError(e))?;
+
+        coordinator.add_service(service.name.clone(), tx.clone(), tracer.clone());
+        let coordinator_tx = coordinator.get_main_tx();
+        let byte_code = ServiceByteCodeGenerator::new(&service).process_service()?;
+        let mut vm = vm::VM::with_tracer(byte_code, Some(coordinator_tx), Some(rx), Some(tracer))
+            .map_err(|e| RuntimeError::InitTraceError(e))?;
+        handles.push(tokio::spawn(async move {
+            return vm.run().await;
+        }));
     }
 
-    opentelemetry::global::shutdown_tracer_provider();
-    if let Some(logger_provider) = logger_provider {
-        logger_provider.shutdown()?;
+    let coordinator_handle: JoinHandle<Result<(), VMError>> = tokio::spawn(async move {
+        coordinator.run().await;
+        Ok(())
+    });
+    handles.push(coordinator_handle);
+    join_all(handles).await;
+    Ok(())
+}
+
+async fn execute_logs(config: config::Config) -> Result<(), RuntimeError> {
+    for task in config.logs {
+        execute_config_task(&task).await?;
     }
+    Ok(())
+}
+
+async fn execute_config_task(task: &config::Task) -> Result<(), RuntimeError> {
+    let byte_code = LogByteCodeGenerator::new(task).process_task()?;
+    let mut vm = vm::VM::with_tracer(byte_code, None, None, None)
+        .map_err(|e| RuntimeError::InitTraceError(e))?;
+    vm.run().await?;
     Ok(())
 }

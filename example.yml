@@ -1,0 +1,19 @@
+services: []
+logs:
+  - name: App Logs
+    frequency: 500
+    count: Infinite
+    template: "User %s logged in"
+    vars:
+      - Franz Josef
+      - 34
+      - Heinz
+    severity: Info
+  - name: App Login Errors
+    frequency: 1000
+    count: 10
+    template: "Failed to login: %s"
+    vars:
+      - Invalid username or password
+      - Upstream connection refused
+    severity: Error

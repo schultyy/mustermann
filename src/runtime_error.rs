@@ -10,6 +10,7 @@ pub enum RuntimeError {
     ConfigError(config::ConfigError),
     ByteCodeError(ByteCodeError),
     ServiceError(JoinError),
+    InitTraceError(opentelemetry::trace::TraceError),
 }
 
 impl std::error::Error for RuntimeError {}
@@ -21,6 +22,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::ConfigError(e) => write!(f, "Config error: {}", e),
             RuntimeError::ByteCodeError(e) => write!(f, "Byte code error: {}", e),
             RuntimeError::ServiceError(e) => write!(f, "Service error: {}", e),
+            RuntimeError::InitTraceError(e) => write!(f, "Init trace error: {}", e),
         }
     }
 }

@@ -1,6 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
+use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
+use opentelemetry::{
+    trace::{SpanKind, TraceContextExt, Tracer},
+    Context,
+};
+use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{self, RandomIdGenerator, TracerProvider};
+use opentelemetry_sdk::Resource;
+use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
+use tonic::metadata::{MetadataMap, MetadataValue};
 
 use crate::{
     code_gen::instruction::{Instruction, StackValue},
@@ -41,15 +52,56 @@ pub struct VM {
     tx: Option<mpsc::Sender<ServiceMessage>>,
     rx: Option<mpsc::Receiver<String>>,
     message_check_counter: usize,
+    tracer: Option<TracerProvider>,
+}
+
+pub fn setup_tracer(
+    endpoint: &str,
+    service_name: &str,
+) -> Result<TracerProvider, opentelemetry::trace::TraceError> {
+    let mut map = MetadataMap::with_capacity(3);
+
+    // map.insert("x-application", service_name.parse().unwrap());
+    map.insert_bin(
+        "trace-proto-bin",
+        MetadataValue::from_bytes(b"[binary data]"),
+    );
+
+    let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .with_metadata(map)
+        .build()?;
+
+    // Then pass it into provider builder
+    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+        .with_batch_exporter(otlp_exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_config(
+            trace::Config::default()
+                // .with_sampler(Sampler::AlwaysOn)
+                .with_id_generator(RandomIdGenerator::default())
+                .with_max_events_per_span(64)
+                .with_max_attributes_per_span(16)
+                .with_max_events_per_span(16)
+                .with_resource(Resource::new(vec![KeyValue::new(
+                    SERVICE_NAME,
+                    service_name.to_string(),
+                )])),
+        )
+        .build();
+    // global::set_tracer_provider(provider);
+    global::set_text_map_propagator(TraceContextPropagator::new());
+    return Ok(provider);
 }
 
 impl VM {
-    pub fn new(
+    pub fn with_tracer(
         code: Vec<Instruction>,
         tx: Option<mpsc::Sender<ServiceMessage>>,
         rx: Option<mpsc::Receiver<String>>,
-    ) -> Self {
-        Self {
+        tracer: Option<TracerProvider>,
+    ) -> Result<Self, opentelemetry::trace::TraceError> {
+        Ok(Self {
             code,
             stack: Vec::new(),
             vars: HashMap::new(),
@@ -57,7 +109,8 @@ impl VM {
             tx,
             rx,
             message_check_counter: 0,
-        }
+            tracer,
+        })
     }
 
     pub async fn run(&mut self) -> Result<(), VMError> {
@@ -186,25 +239,32 @@ impl VM {
                     let method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                     let service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
 
-                    //find last label in code
-                    let function_name = self
-                        .code
-                        .iter()
-                        .rev()
-                        .find(|i| matches!(i, Instruction::Label(_)))
-                        .unwrap();
+                    //find the previous label in code based on current
+                    let mut function_name = "default".into();
+                    for i in (0..self.ip).rev() {
+                        if matches!(self.code[i], Instruction::Label(_)) {
+                            match self.code[i].clone() {
+                                Instruction::Label(label) => function_name = label,
+                                _ => {}
+                            }
+                            break;
+                        }
+                    }
 
-                    let function_name = match function_name {
-                        Instruction::Label(s) => s,
-                        _ => return Err(VMError::InvalidStackValue),
-                    };
-                    let root_span = tracing::info_span!(
-                        "vm_remote_call",
-                        service = %self.vars.get("name").unwrap(),
-                        method = %function_name,
-                    );
-
-                    let _guard = root_span.enter();
+                    let service_name = self.vars.get("name").unwrap();
+                    let service_name = service_name.to_string();
+                    let mut metadata = HashMap::new();
+                    if let Some(tracer_provider) = self.tracer.as_ref() {
+                        let tracer = tracer_provider.tracer(service_name.clone());
+                        let span = tracer
+                            .span_builder(format!("{}/{}", service_name, function_name))
+                            .with_kind(SpanKind::Server)
+                            .start(&tracer);
+                        let cx = Context::current_with_span(span);
+                        global::get_text_map_propagator(|propagator| {
+                            propagator.inject_context(&cx, &mut metadata)
+                        });
+                    }
 
                     let service = match service {
                         StackValue::String(s) => s,
@@ -218,7 +278,7 @@ impl VM {
                     tx.send(ServiceMessage::Call {
                         to: service,
                         function: method,
-                        parent: root_span.clone(),
+                        metadata,
                     })
                     .await
                     .or(Err(VMError::RemoteCallError))?;
@@ -237,14 +297,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_vm_run() {
-        let mut vm = VM::new(
+        let mut vm = VM::with_tracer(
             vec![Instruction::StoreVar(
                 "name".to_string(),
                 "test".to_string(),
             )],
             None,
             None,
-        );
+            None,
+        )
+        .unwrap();
         vm.run().await.unwrap();
     }
 }

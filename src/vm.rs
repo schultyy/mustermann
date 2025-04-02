@@ -7,7 +7,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::{self, RandomIdGenerator, TracerProvider};
+use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, TracerProvider};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
@@ -61,7 +61,7 @@ pub fn setup_tracer(
 ) -> Result<TracerProvider, opentelemetry::trace::TraceError> {
     let mut map = MetadataMap::with_capacity(3);
 
-    // map.insert("x-application", service_name.parse().unwrap());
+    map.insert("x-application", service_name.parse().unwrap());
     map.insert_bin(
         "trace-proto-bin",
         MetadataValue::from_bytes(b"[binary data]"),
@@ -69,29 +69,27 @@ pub fn setup_tracer(
 
     let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
-        .with_endpoint(endpoint)
+        .with_export_config(opentelemetry_otlp::ExportConfig {
+            endpoint: Some(endpoint.to_string()),
+            ..Default::default()
+        })
+        .with_timeout(std::time::Duration::from_secs(3))
         .with_metadata(map)
         .build()?;
 
-    // Then pass it into provider builder
-    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+    let provider = Builder::default()
+        .with_id_generator(RandomIdGenerator::default())
+        .with_max_events_per_span(64)
+        .with_max_attributes_per_span(16)
+        .with_resource(Resource::new(vec![KeyValue::new(
+            SERVICE_NAME,
+            service_name.to_string(),
+        )]))
         .with_batch_exporter(otlp_exporter, opentelemetry_sdk::runtime::Tokio)
-        .with_config(
-            trace::Config::default()
-                // .with_sampler(Sampler::AlwaysOn)
-                .with_id_generator(RandomIdGenerator::default())
-                .with_max_events_per_span(64)
-                .with_max_attributes_per_span(16)
-                .with_max_events_per_span(16)
-                .with_resource(Resource::new(vec![KeyValue::new(
-                    SERVICE_NAME,
-                    service_name.to_string(),
-                )])),
-        )
         .build();
-    // global::set_tracer_provider(provider);
+    // Then pass it into provider builder
     global::set_text_map_propagator(TraceContextPropagator::new());
-    return Ok(provider);
+    Ok(provider)
 }
 
 impl VM {
@@ -181,7 +179,6 @@ impl VM {
                     StackValue::Int(n) => {
                         tracing::info!("{}: {}", name, n);
                     }
-                    _ => return Err(VMError::InvalidStackValue),
                 }
             }
             Instruction::Stderr => {

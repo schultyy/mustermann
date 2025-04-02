@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::{Span, SpanKind, Status, TraceContextExt, TraceId, Tracer};
+use opentelemetry::trace::{Span, SpanKind, Status, Tracer};
 use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
 use opentelemetry_sdk::trace;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;

@@ -32,7 +32,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse command line arguments
     let args = Args::parse();
     if let Some(otel_endpoint) = args.otel_endpoint.clone() {
         println!("Setting up otel: {}", otel_endpoint);

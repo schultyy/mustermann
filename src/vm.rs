@@ -8,12 +8,11 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, Span, TracerProvider};
+use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, TracerProvider};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
 use tonic::metadata::{MetadataMap, MetadataValue};
-use tracing::Instrument;
 
 use crate::{
     code_gen::instruction::{Instruction, StackValue},
@@ -51,8 +50,6 @@ pub struct VM {
     stack: Vec<StackValue>,
     vars: HashMap<String, StackValue>,
     ip: usize,
-    // on_stdout: Arc<Box<dyn Fn(&str, &str) -> ()>>, //name, message
-    // on_stderr: Arc<Box<dyn Fn(&str, &str) -> ()>>, //name, message
     tx: Option<mpsc::Sender<ServiceMessage>>,
     rx: Option<mpsc::Receiver<String>>,
     message_check_counter: usize,
@@ -263,10 +260,6 @@ impl VM {
                                 .span_builder(format!("{}/{}", service_name, function_name))
                                 .with_kind(SpanKind::Server)
                                 .with_context(otel_cx.clone());
-                            // let cx = Context::current_with_span(span);
-                            // global::get_text_map_propagator(|propagator| {
-                            //     propagator.inject_context(&cx, &mut metadata)
-                            // });
                         }
                     }
 

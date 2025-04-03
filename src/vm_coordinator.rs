@@ -1,23 +1,10 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::{FutureExt, Span, SpanKind, Status, Tracer};
+use opentelemetry::trace::{Span, SpanKind, Status, Tracer};
 use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
 use opentelemetry_sdk::trace;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
-
-// Create a HashMap adapter that implements opentelemetry's Extractor
-struct MetadataExtractor<'a>(pub &'a HashMap<String, String>);
-
-impl<'a> opentelemetry::propagation::Extractor for MetadataExtractor<'a> {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(key).map(|v| v.as_str())
-    }
-
-    fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(|k| k.as_str()).collect()
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum ServiceMessage {

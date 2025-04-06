@@ -3,6 +3,7 @@ use std::fs;
 use clap::Parser;
 use code_gen::{instruction::Instruction, CodeGenerator};
 use futures::future::join_all;
+use printer::AnnotatedInstruction;
 use tokio::sync::mpsc;
 use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -12,6 +13,7 @@ mod config;
 mod metadata_map;
 mod otel;
 mod parser;
+mod printer;
 mod runtime_error;
 mod vm;
 mod vm_coordinator;
@@ -48,6 +50,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .init();
     }
 
+    if args.print_code {
+        print_code(&args)?;
+    } else {
+        execute_code(&args).await?;
+    }
+
+    Ok(())
+}
+
+fn print_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let file_path = args.file_path.clone();
+    let file_content = fs::read_to_string(&file_path)?;
+    let ast = parser::parse(&file_content)?;
+    let codes = CodeGenerator::new(&ast).process()?;
+    for code in codes {
+        let rows: Vec<AnnotatedInstruction> = code.iter().map(|i| i.into()).collect::<Vec<_>>();
+        let mut table = tabled::Table::new(rows);
+        println!("{}", table.with(tabled::settings::Style::sharp()));
+    }
+    Ok(())
+}
+
+async fn execute_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let file_path = args.file_path.clone();
     let file_content = fs::read_to_string(&file_path)?;
     let ast = parser::parse(&file_content)?;

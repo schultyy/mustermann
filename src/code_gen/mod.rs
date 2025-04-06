@@ -48,28 +48,7 @@ impl<'a> CodeGenerator<'a> {
         }
         instructions.push(Instruction::Label(format!("start_{}_main", service.name)));
         if let Some(loop_def) = service.loops.first() {
-            if let Some(statements) = loop_def.statements.first() {
-                instructions.push(Instruction::Label("start_loop".to_string()));
-                match statements {
-                    Statement::Call { service, method } => {
-                        if let Some(_service) = service {
-                            return Err(CodeGenError::InvalidStatement(format!(
-                                "Expected Local Call - Got {}",
-                                statements.to_string()
-                            )));
-                        }
-                        instructions.push(Instruction::Call(format!("start_{}", method)));
-                    }
-                    _ => {
-                        return Err(CodeGenError::InvalidStatement(format!(
-                            "Expected Call - Got {}",
-                            statements.to_string()
-                        )));
-                    }
-                }
-                instructions.push(Instruction::Jump(format!("start_loop")));
-                instructions.push(Instruction::Label("end_loop".to_string()));
-            }
+            self.process_loop(&mut instructions, &loop_def)?;
         } else {
             instructions.push(Instruction::Nop);
             instructions.push(Instruction::Jump(format!("start_{}_main", service.name)));
@@ -79,14 +58,43 @@ impl<'a> CodeGenerator<'a> {
         Ok(instructions)
     }
 
+    fn process_loop(
+        &self,
+        instructions: &mut Vec<Instruction>,
+        loop_def: &crate::parser::Loop,
+    ) -> Result<(), CodeGenError> {
+        if let Some(statements) = loop_def.statements.first() {
+            instructions.push(Instruction::Label("start_loop".to_string()));
+            match statements {
+                Statement::Call { service, method } => {
+                    if let Some(_service) = service {
+                        return Err(CodeGenError::InvalidStatement(format!(
+                            "Expected Local Call - Got {}",
+                            statements.to_string()
+                        )));
+                    }
+                    instructions.push(Instruction::Call(format!("start_{}", method)));
+                }
+                _ => {
+                    return Err(CodeGenError::InvalidStatement(format!(
+                        "Expected Call - Got {}",
+                        statements.to_string()
+                    )));
+                }
+            }
+            instructions.push(Instruction::Jump(format!("start_loop")));
+            instructions.push(Instruction::Label("end_loop".to_string()));
+        }
+        Ok(())
+    }
+
     fn process_method(&self, method: &'a Method) -> Vec<Instruction> {
         let mut instructions = Vec::new();
         instructions.push(Instruction::Label(format!("start_{}", method.name)));
         for statement in &method.statements {
             match statement {
                 Statement::Print { message, args } => {
-                    instructions.push(Instruction::Push(StackValue::String(message.clone())));
-                    instructions.push(Instruction::Stdout);
+                    instructions.extend(self.process_print(message, args));
                 }
                 Statement::Sleep { duration } => {
                     instructions.push(Instruction::Sleep(duration.as_millis() as u64));
@@ -98,6 +106,22 @@ impl<'a> CodeGenerator<'a> {
         }
         instructions.push(Instruction::Ret);
         instructions.push(Instruction::Label(format!("end_{}", method.name)));
+        instructions
+    }
+
+    fn process_print(&self, message: &str, args: &Option<Vec<String>>) -> Vec<Instruction> {
+        let mut instructions = Vec::new();
+        if let Some(args) = args {
+            for arg in args {
+                instructions.push(Instruction::Push(StackValue::String(message.to_string())));
+                instructions.push(Instruction::Push(StackValue::String(arg.to_string())));
+                instructions.push(Instruction::Printf);
+                instructions.push(Instruction::Stdout);
+            }
+        } else {
+            instructions.push(Instruction::Push(StackValue::String(message.to_string())));
+            instructions.push(Instruction::Stdout);
+        }
         instructions
     }
 }
@@ -145,6 +169,30 @@ mod tests {
 
             loop {
                 call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_template() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_template_and_empty_var_list() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with []
+                sleep 500ms
             }
         }
         "
@@ -222,6 +270,60 @@ mod tests {
             Instruction::Label("end_loop".to_string()),
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(code, &expected);
+    }
+
+    #[test]
+    fn test_service_with_template() {
+        let service = service_with_template();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::Nop,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(code, &expected);
+    }
+
+    #[test]
+    fn test_service_with_template_and_empty_var_list() {
+        let service = service_with_template_and_empty_var_list();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::Nop,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
         ];
         assert_eq!(code, &expected);
     }

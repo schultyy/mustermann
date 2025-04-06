@@ -93,6 +93,7 @@ pub struct VM<'a> {
     ip: usize,
     print_tx: mpsc::Sender<PrintMessage>,
     max_execution_counter: Option<usize>,
+    return_addresses: Vec<usize>,
 }
 
 impl<'a> VM<'a> {
@@ -104,6 +105,7 @@ impl<'a> VM<'a> {
             ip: 0,
             print_tx,
             max_execution_counter: None,
+            return_addresses: Vec::new(),
         }
     }
 
@@ -231,11 +233,16 @@ impl<'a> VM<'a> {
                 return Err(VMError::UnsupportedInstruction);
             }
             Instruction::Nop => {}
-            Instruction::Call(_) => {
-                return Err(VMError::UnsupportedInstruction);
+            Instruction::Call(label) => {
+                self.return_addresses.push(self.ip);
+                self.ip = self
+                    .code
+                    .iter()
+                    .position(|i| i == &Instruction::Label(label.clone()))
+                    .unwrap();
             }
             Instruction::Ret => {
-                return Err(VMError::UnsupportedInstruction);
+                self.ip = self.return_addresses.pop().unwrap();
             }
         }
         Ok(())
@@ -481,6 +488,22 @@ mod tests {
         .to_string()
     }
 
+    fn service_with_local_call() -> String {
+        "
+        service frontend {
+            method main_page {
+                print \"Main page\"
+                sleep 1ms
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
     #[tokio::test]
     async fn test_vm_run() {
         let service = service();
@@ -497,6 +520,33 @@ mod tests {
             Err(e) => {
                 assert!(print_rx.is_empty(), "Print messages should be empty");
                 assert_eq!(e, VMError::MaxExecutionCounterReached);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_with_local_call() {
+        let service = service_with_local_call();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code, print_tx).with_max_execution_counter(40);
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::MaxExecutionCounterReached);
+                assert_eq!(print_rx.len(), 5);
+                for _ in 0..5 {
+                    let print_messages = print_rx.recv().await.unwrap();
+                    assert_eq!(
+                        print_messages,
+                        PrintMessage::Stdout("Main page".to_string())
+                    );
+                }
             }
         }
     }

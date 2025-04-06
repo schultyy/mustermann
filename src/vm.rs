@@ -22,6 +22,7 @@ pub enum VMError {
     PrintError(mpsc::error::SendError<PrintMessage>),
     UnsupportedInstruction,
     MaxExecutionCounterReached,
+    InvalidTemplate(String),
 }
 
 impl std::error::Error for VMError {}
@@ -39,6 +40,7 @@ impl std::fmt::Display for VMError {
             VMError::PrintError(err) => write!(f, "Print error: {}", err),
             VMError::UnsupportedInstruction => write!(f, "Unsupported instruction"),
             VMError::MaxExecutionCounterReached => write!(f, "Max execution counter reached"),
+            VMError::InvalidTemplate(template) => write!(f, "Invalid template: {}", template),
         }
     }
 }
@@ -209,19 +211,23 @@ impl<'a> VM<'a> {
                     .unwrap();
             }
             Instruction::Printf => {
-                let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                let template = match template {
-                    StackValue::String(s) => s,
-                    _ => return Err(VMError::InvalidStackValue),
-                };
                 let var = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 let var = match var {
                     StackValue::String(s) => s,
                     _ => return Err(VMError::InvalidStackValue),
                 };
+                let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let template = match template {
+                    StackValue::String(s) => s,
+                    _ => return Err(VMError::InvalidStackValue),
+                };
 
-                let formatted = template.replace("%s", &var);
-                self.stack.push(StackValue::String(formatted));
+                if template.contains("%s") {
+                    let formatted = template.replace("%s", &var);
+                    self.stack.push(StackValue::String(formatted));
+                } else {
+                    return Err(VMError::InvalidTemplate(template.clone()));
+                }
             }
             Instruction::RemoteCall => {
                 return Err(VMError::UnsupportedInstruction);
@@ -504,6 +510,51 @@ mod tests {
         .to_string()
     }
 
+    fn service_with_print_template() -> String {
+        "
+        service frontend {
+            method main_page {
+                print \"Main page %s\" with [\"12345\", \"67890\"]
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_stderr_template() -> String {
+        "
+        service frontend {
+            method main_page {
+                stderr \"Main page %s\" with [\"12345\", \"67890\"]
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_broken_template() -> String {
+        "
+        service frontend {
+            method main_page {
+                print \"Main page\" with [\"12345\", \"67890\"]
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
     #[tokio::test]
     async fn test_vm_run() {
         let service = service();
@@ -547,6 +598,86 @@ mod tests {
                         PrintMessage::Stdout("Main page".to_string())
                     );
                 }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_with_print_template() {
+        let service = service_with_print_template();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code, print_tx).with_max_execution_counter(15);
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::MaxExecutionCounterReached);
+                assert_eq!(print_rx.len(), 2);
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stdout("Main page 12345".to_string())
+                );
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stdout("Main page 67890".to_string())
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_with_stderr_template() {
+        let service = service_with_stderr_template();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code, print_tx).with_max_execution_counter(15);
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::MaxExecutionCounterReached);
+                assert_eq!(print_rx.len(), 2);
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stderr("Main page 12345".to_string())
+                );
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stderr("Main page 67890".to_string())
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_with_broken_template() {
+        let service = service_with_broken_template();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let (print_tx, print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code, print_tx).with_max_execution_counter(10);
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::InvalidTemplate("Main page".to_string()));
+                assert_eq!(print_rx.len(), 0);
             }
         }
     }

@@ -46,6 +46,28 @@ pub enum Statement {
     },
 }
 
+impl std::fmt::Display for Statement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Statement::Print { message, args } => {
+                write!(f, "Print({})", message)?;
+                if let Some(args) = args {
+                    write!(f, "({:?})", args)?;
+                }
+                Ok(())
+            }
+            Statement::Sleep { duration } => write!(f, "Sleep({:?})", duration),
+            Statement::Call { service, method } => {
+                write!(
+                    f,
+                    "Call({}.{})",
+                    service.clone().unwrap_or_default(),
+                    method
+                )
+            }
+        }
+    }
+}
 #[derive(Debug)]
 pub enum ParseError {
     PestError(Box<pest::error::Error<Rule>>),

@@ -308,6 +308,9 @@ impl VM {
                     return Err(VMError::MissingSpan);
                 }
             },
+            Instruction::Nop => {}
+            Instruction::Call(_label) => {}
+            Instruction::Ret => {}
         }
         Ok(())
     }

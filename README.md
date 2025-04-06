@@ -57,6 +57,20 @@ service payments {
 }
 ```
 
+Standalone service printing values to stderr:
+
+```
+service payments {
+  method charge {
+    stderr "Processing payment for order %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+
+  loop {
+    call charge
+  }
+}
+```
 
 Service accepting requests from other services:
 

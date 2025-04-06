@@ -20,6 +20,12 @@ impl std::fmt::Display for CodeGenError {
 
 impl std::error::Error for CodeGenError {}
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrintType {
+    Stdout,
+    Stderr,
+}
+
 pub struct CodeGenerator<'a> {
     ast: &'a Program,
 }
@@ -94,7 +100,7 @@ impl<'a> CodeGenerator<'a> {
         for statement in &method.statements {
             match statement {
                 Statement::Stdout { message, args } => {
-                    instructions.extend(self.process_print(message, args));
+                    instructions.extend(self.process_print(message, args, PrintType::Stdout));
                 }
                 Statement::Sleep { duration } => {
                     instructions.push(Instruction::Sleep(duration.as_millis() as u64));
@@ -102,7 +108,9 @@ impl<'a> CodeGenerator<'a> {
                 Statement::Call { service, method } => {
                     // instructions.push(Instruction::Call(service.clone(), method.clone()));
                 }
-                Statement::Stderr { message, args } => { /* TODO: Implement stderr */ }
+                Statement::Stderr { message, args } => {
+                    instructions.extend(self.process_print(message, args, PrintType::Stderr));
+                }
             }
         }
         instructions.push(Instruction::Ret);
@@ -110,18 +118,29 @@ impl<'a> CodeGenerator<'a> {
         instructions
     }
 
-    fn process_print(&self, message: &str, args: &Option<Vec<String>>) -> Vec<Instruction> {
+    fn process_print(
+        &self,
+        message: &str,
+        args: &Option<Vec<String>>,
+        print_type: PrintType,
+    ) -> Vec<Instruction> {
         let mut instructions = Vec::new();
         if let Some(args) = args {
             for arg in args {
                 instructions.push(Instruction::Push(StackValue::String(message.to_string())));
                 instructions.push(Instruction::Push(StackValue::String(arg.to_string())));
                 instructions.push(Instruction::Printf);
-                instructions.push(Instruction::Stdout);
+                match print_type {
+                    PrintType::Stdout => instructions.push(Instruction::Stdout),
+                    PrintType::Stderr => instructions.push(Instruction::Stderr),
+                }
             }
         } else {
             instructions.push(Instruction::Push(StackValue::String(message.to_string())));
-            instructions.push(Instruction::Stdout);
+            match print_type {
+                PrintType::Stdout => instructions.push(Instruction::Stdout),
+                PrintType::Stderr => instructions.push(Instruction::Stderr),
+            }
         }
         instructions
     }
@@ -188,11 +207,35 @@ mod tests {
         .to_string()
     }
 
+    fn service_with_stderr_template() -> String {
+        "
+        service products {
+            method get_products {
+                stderr \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
     fn service_with_template_and_empty_var_list() -> String {
         "
         service products {
             method get_products {
                 print \"Fetching product orders %s\" with []
+                sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_stderr_template_and_empty_var_list() -> String {
+        "
+        service products {
+            method get_products {
+                stderr \"Fetching product orders %s\" with []
                 sleep 500ms
             }
         }
@@ -309,6 +352,60 @@ mod tests {
     #[test]
     fn test_service_with_template_and_empty_var_list() {
         let service = service_with_template_and_empty_var_list();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::Nop,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(code, &expected);
+    }
+
+    #[test]
+    fn test_service_with_stderr_template() {
+        let service = service_with_stderr_template();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stderr,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stderr,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::Nop,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(code, &expected);
+    }
+
+    #[test]
+    fn test_service_with_stderr_template_and_empty_var_list() {
+        let service = service_with_stderr_template_and_empty_var_list();
         let ast = parser::parse(&service).unwrap();
         let codes = CodeGenerator::new(&ast).process().unwrap();
         let code = codes.first().unwrap();

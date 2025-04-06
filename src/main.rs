@@ -1,6 +1,11 @@
 use std::fs;
 
 use clap::Parser;
+use code_gen::{instruction::Instruction, CodeGenerator};
+use futures::future::join_all;
+use tokio::sync::mpsc;
+use tracing::error;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod code_gen;
 mod config;
@@ -29,33 +34,65 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
+    if let Some(otel_endpoint) = args.otel_endpoint.clone() {
+        println!("Setting up otel: {}", otel_endpoint);
+        otel::setup_otlp(&otel_endpoint, &args.service_name)?;
+    } else {
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
+
     let file_path = args.file_path.clone();
     let file_content = fs::read_to_string(&file_path)?;
     let ast = parser::parse(&file_content)?;
-    println!("AST: {:?}", ast);
-    // if let Some(otel_endpoint) = args.otel_endpoint.clone() {
-    //     println!("Setting up otel: {}", otel_endpoint);
-    //     otel::setup_otlp(&otel_endpoint, &args.service_name)?;
-    // } else {
-    //     tracing_subscriber::registry()
-    //         .with(
-    //             tracing_subscriber::EnvFilter::try_from_default_env()
-    //                 .unwrap_or_else(|_| "info".into()),
-    //         )
-    //         .with(tracing_subscriber::fmt::layer())
-    //         .init();
-    // }
-    // let file_path = args.file_path.clone();
-    // let config = config::Config::from_file(&file_path)?;
-    // if args.print_code {
-    //     print_code(&config);
-    // } else {
-    //     let config_clone = config.clone();
-    //     execute_services(&args, config_clone).await?;
-    //     let config_clone = config.clone();
-    //     execute_logs(config_clone).await?;
-    // }
+    let codes = CodeGenerator::new(&ast).process()?;
+    let mut handles: Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>> = Vec::new();
+
+    for service_code in codes {
+        let service_code = service_code.clone();
+        let service_handles = execute_service(service_code).await;
+        handles.extend(service_handles);
+    }
+    join_all(handles).await;
     Ok(())
+}
+
+async fn execute_service(
+    service_code: Vec<Instruction>,
+) -> Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>> {
+    let (print_tx, mut print_rx) = mpsc::channel(1);
+    let mut vm = vm::VM::new(service_code.clone(), print_tx);
+    let mut handles = Vec::new();
+    let print_handle = tokio::spawn(async move {
+        while let Some(message) = print_rx.recv().await {
+            match message {
+                vm::PrintMessage::Stdout(message) => {
+                    tracing::info!("{}", message);
+                }
+                vm::PrintMessage::Stderr(message) => {
+                    tracing::error!("{}", message);
+                }
+            }
+        }
+        Ok(())
+    });
+    handles.push(print_handle);
+    handles.push(tokio::spawn(async move {
+        match vm.run().await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("Error: {}", e);
+                Err(e)
+            }
+        }
+    }));
+    handles
 }
 
 // async fn execute_services(args: &Args, config: config::Config) -> Result<(), RuntimeError> {

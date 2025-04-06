@@ -88,8 +88,8 @@ pub enum PrintMessage {
     Stderr(String),
 }
 
-pub struct VM<'a> {
-    code: &'a Vec<Instruction>,
+pub struct VM {
+    code: Vec<Instruction>,
     stack: Vec<StackValue>,
     vars: HashMap<String, StackValue>,
     ip: usize,
@@ -98,8 +98,8 @@ pub struct VM<'a> {
     return_addresses: Vec<usize>,
 }
 
-impl<'a> VM<'a> {
-    pub fn new(code: &'a Vec<Instruction>, print_tx: mpsc::Sender<PrintMessage>) -> Self {
+impl VM {
+    pub fn new(code: Vec<Instruction>, print_tx: mpsc::Sender<PrintMessage>) -> Self {
         Self {
             code,
             stack: Vec::new(),
@@ -133,6 +133,7 @@ impl<'a> VM<'a> {
     }
 
     async fn execute_instruction(&mut self, instruction: Instruction) -> Result<(), VMError> {
+        tracing::debug!("Executing instruction: {:?}", instruction);
         match instruction {
             Instruction::Push(stack_value) => {
                 self.stack.push(stack_value);
@@ -163,6 +164,7 @@ impl<'a> VM<'a> {
             Instruction::Label(_) => { /* Labels are used for jumps and are not executed */ }
             Instruction::Stdout => {
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                tracing::debug!("Sending stdout: {:?}", top);
                 match top {
                     StackValue::String(s) => {
                         self.print_tx
@@ -241,11 +243,16 @@ impl<'a> VM<'a> {
             Instruction::Nop => {}
             Instruction::Call(label) => {
                 self.return_addresses.push(self.ip);
-                self.ip = self
+                let jump_to = self
                     .code
                     .iter()
-                    .position(|i| i == &Instruction::Label(label.clone()))
-                    .unwrap();
+                    .position(|i| i == &Instruction::Label(label.clone()));
+
+                if let Some(jump_to) = jump_to {
+                    self.ip = jump_to;
+                } else {
+                    return Err(VMError::MissingLabel(label.clone()));
+                }
             }
             Instruction::Ret => {
                 self.ip = self.return_addresses.pop().unwrap();
@@ -563,7 +570,7 @@ mod tests {
         let code = codes.first().unwrap();
 
         let (print_tx, print_rx) = mpsc::channel(10);
-        let mut vm = VM::new(code, print_tx).with_max_execution_counter(10);
+        let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(10);
         match vm.run().await {
             Ok(_) => {
                 assert!(false, "VM should have reached max execution counter");
@@ -583,7 +590,7 @@ mod tests {
         let code = codes.first().unwrap();
 
         let (print_tx, mut print_rx) = mpsc::channel(10);
-        let mut vm = VM::new(code, print_tx).with_max_execution_counter(40);
+        let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(40);
         match vm.run().await {
             Ok(_) => {
                 assert!(false, "VM should have reached max execution counter");
@@ -610,7 +617,7 @@ mod tests {
         let code = codes.first().unwrap();
 
         let (print_tx, mut print_rx) = mpsc::channel(10);
-        let mut vm = VM::new(code, print_tx).with_max_execution_counter(15);
+        let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(15);
         match vm.run().await {
             Ok(_) => {
                 assert!(false, "VM should have reached max execution counter");
@@ -640,7 +647,7 @@ mod tests {
         let code = codes.first().unwrap();
 
         let (print_tx, mut print_rx) = mpsc::channel(10);
-        let mut vm = VM::new(code, print_tx).with_max_execution_counter(15);
+        let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(15);
         match vm.run().await {
             Ok(_) => {
                 assert!(false, "VM should have reached max execution counter");
@@ -670,7 +677,7 @@ mod tests {
         let code = codes.first().unwrap();
 
         let (print_tx, print_rx) = mpsc::channel(10);
-        let mut vm = VM::new(code, print_tx).with_max_execution_counter(10);
+        let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(10);
         match vm.run().await {
             Ok(_) => {
                 assert!(false, "VM should have reached max execution counter");

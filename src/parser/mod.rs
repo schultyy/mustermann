@@ -31,9 +31,13 @@ pub struct Loop {
     pub statements: Vec<Statement>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
-    Print {
+    Stdout {
+        message: String,
+        args: Option<Vec<String>>,
+    },
+    Stderr {
         message: String,
         args: Option<Vec<String>>,
     },
@@ -49,7 +53,7 @@ pub enum Statement {
 impl std::fmt::Display for Statement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Statement::Print { message, args } => {
+            Statement::Stdout { message, args } => {
                 write!(f, "Print({})", message)?;
                 if let Some(args) = args {
                     write!(f, "({:?})", args)?;
@@ -64,6 +68,13 @@ impl std::fmt::Display for Statement {
                     service.clone().unwrap_or_default(),
                     method
                 )
+            }
+            Statement::Stderr { message, args } => {
+                write!(f, "Stderr({})", message)?;
+                if let Some(args) = args {
+                    write!(f, "({:?})", args)?;
+                }
+                Ok(())
             }
         }
     }
@@ -222,6 +233,13 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement, ParseError> {
 fn parse_print_statement(pair: Pair<Rule>) -> Result<Statement, ParseError> {
     let mut inner_pairs = pair.into_inner();
 
+    // Get the print channel (print or stderr)
+    let channel_pair = inner_pairs.next().ok_or_else(|| {
+        ParseError::InvalidInput("Expected print channel in print statement".to_string())
+    })?;
+
+    let is_stderr = channel_pair.as_str() == "stderr";
+
     // Get the message string
     let message_pair = inner_pairs.next().ok_or_else(|| {
         ParseError::InvalidInput("Expected string literal in print statement".to_string())
@@ -253,7 +271,11 @@ fn parse_print_statement(pair: Pair<Rule>) -> Result<Statement, ParseError> {
         None
     };
 
-    Ok(Statement::Print { message, args })
+    if is_stderr {
+        Ok(Statement::Stderr { message, args })
+    } else {
+        Ok(Statement::Stdout { message, args })
+    }
 }
 
 // Parse a sleep statement
@@ -370,6 +392,119 @@ impl RuleTrait for Rule {
             Rule::WHITESPACE => "WHITESPACE",
             Rule::COMMENT => "COMMENT",
             Rule::EOI => "EOI",
+            Rule::print_channel => "print_channel",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_service() {
+        let service = "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with []
+            }
+        }
+        ";
+        let ast = parse(service).unwrap();
+
+        assert_eq!(ast.services.len(), 1);
+        assert_eq!(ast.services[0].name, "products");
+        assert_eq!(ast.services[0].methods.len(), 1);
+        assert_eq!(ast.services[0].methods[0].name, "get_products");
+    }
+
+    #[test]
+    fn test_parse_service_with_empty_var_list() {
+        let service = "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with []
+            }
+        }
+        ";
+        let ast = parse(service).unwrap();
+
+        assert_eq!(ast.services.len(), 1);
+        assert_eq!(ast.services[0].name, "products");
+        assert_eq!(ast.services[0].methods.len(), 1);
+        assert_eq!(ast.services[0].methods[0].name, "get_products");
+        assert_eq!(ast.services[0].methods[0].statements.len(), 1);
+        assert_eq!(
+            ast.services[0].methods[0].statements[0],
+            Statement::Stdout {
+                message: "Fetching product orders %s".to_string(),
+                args: Some(vec![]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_service_with_empty_var_list_and_sleep() {
+        let service = "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with []
+                sleep 1s
+            }
+        }
+        ";
+        let ast = parse(service).unwrap();
+
+        assert_eq!(ast.services.len(), 1);
+        assert_eq!(ast.services[0].name, "products");
+        assert_eq!(ast.services[0].methods.len(), 1);
+        assert_eq!(ast.services[0].methods[0].name, "get_products");
+        assert_eq!(ast.services[0].methods[0].statements.len(), 2);
+        assert_eq!(
+            ast.services[0].methods[0].statements[0],
+            Statement::Stdout {
+                message: "Fetching product orders %s".to_string(),
+                args: Some(vec![]),
+            }
+        );
+        assert_eq!(
+            ast.services[0].methods[0].statements[1],
+            Statement::Sleep {
+                duration: Duration::from_secs(1),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_service_with_stderr() {
+        let service = "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with []
+                stderr \"Error fetching product orders\"
+            }
+        }
+        ";
+        let ast = parse(service).unwrap();
+
+        assert_eq!(ast.services.len(), 1);
+        assert_eq!(ast.services[0].name, "products");
+        assert_eq!(ast.services[0].methods.len(), 1);
+        assert_eq!(ast.services[0].methods[0].name, "get_products");
+        assert_eq!(ast.services[0].methods[0].statements.len(), 2);
+        assert_eq!(
+            ast.services[0].methods[0].statements[0],
+            Statement::Stdout {
+                message: "Fetching product orders %s".to_string(),
+                args: Some(vec![]),
+            }
+        );
+        assert_eq!(
+            ast.services[0].methods[0].statements[1],
+            Statement::Stderr {
+                message: "Error fetching product orders".to_string(),
+                args: None,
+            }
+        );
     }
 }

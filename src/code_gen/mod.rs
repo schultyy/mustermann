@@ -93,7 +93,7 @@ impl<'a> CodeGenerator<'a> {
         instructions.push(Instruction::Label(format!("start_{}", method.name)));
         for statement in &method.statements {
             match statement {
-                Statement::Print { message, args } => {
+                Statement::Stdout { message, args } => {
                     instructions.extend(self.process_print(message, args));
                 }
                 Statement::Sleep { duration } => {
@@ -102,6 +102,7 @@ impl<'a> CodeGenerator<'a> {
                 Statement::Call { service, method } => {
                     // instructions.push(Instruction::Call(service.clone(), method.clone()));
                 }
+                Statement::Stderr { message, args } => { /* TODO: Implement stderr */ }
             }
         }
         instructions.push(Instruction::Ret);

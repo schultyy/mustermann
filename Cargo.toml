@@ -28,3 +28,5 @@ ctrlc = "3.4"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = "0.9.34"
 opentelemetry-semantic-conventions = "0.29.0"
+pest = "2.8.0"
+pest_derive = "2.8.0"

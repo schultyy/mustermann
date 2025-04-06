@@ -42,72 +42,54 @@ mustermann [OPTIONS] <file_path> [otel_endpoint] [--service-name <service_name>]
 mustermann config.yaml http://localhost:4317 --service-name my-service
 ```
 
-## Configuration
+Standalone service just printing values:
 
-### Log Configuration
+```
+service payments {
+  method charge {
+    print "Processing payment for order %s" with ["12345", "67890"]
+    sleep 500ms
+  }
 
-Define log patterns and their execution behavior:
-
-```yaml
-- task_name: App Logs
-  frequency: Infinite
-  template: "User %s logged in"
-  vars:
-    - Franz Josef
-    - 34
-    - Heinz
-  severity: INFO
-- task_name: App Login Errors
-  frequency: Amount(45)
-  template: "Failed to login: %s"
-  vars:
-    - Invalid username or password
-    - Upstream connection refused
-  severity: ERROR
+  loop {
+    call charge
+  }
+}
 ```
 
-### Service Configuration
 
-Define interconnected services and their interactions:
+Service accepting requests from other services:
 
-```yaml
-logs: []
-services:
-  - name: checkout
-    methods:
-      - name: process
-        stdout: Processing Order
-        sleep_ms: 100
-  - name: user_service
-    methods:
-      - name: get_user
-        stdout: Getting user
-        sleep_ms: 100
-  - name: product_service
-    methods:
-      - name: get_product
-        stdout: Getting product
-        sleep_ms: 100
-  - name: web_frontend
-    methods:
-      - name: start_checkout
-        stdout: Starting checkout
-        calls:
-          - name: product_service
-            method: get_product
-          - name: user_service
-            method: get_user
-          - name: checkout
-            method: process
-        sleep_ms: 100
-    invoke:
-      - start_checkout
+```
+service payments {
+  method charge {
+    print "Processing payment for order %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+}
 ```
 
-- Services can invoke each other's methods. 
-- If no `invoke` is specified, the service just runs in an infinite loop, waiting for invokations.
+Call another service:
 
-![screenshot.png](screenshot.png)
+```
+service products {
+  method get_products {
+    print "Fetching product orders %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+}
+
+service frontend {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}
+```
 
 ## License
 

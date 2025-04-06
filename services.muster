@@ -1,0 +1,6 @@
+service products {
+  method get_products {
+    print "Fetching product orders %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+}

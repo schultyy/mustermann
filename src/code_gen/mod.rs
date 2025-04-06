@@ -20,18 +20,18 @@ impl std::fmt::Display for CodeGenError {
 
 impl std::error::Error for CodeGenError {}
 
-struct CodeGenerator<'a> {
+pub struct CodeGenerator<'a> {
     ast: &'a Program,
 }
 
 impl<'a> CodeGenerator<'a> {
-    fn new(ast: &'a Program) -> Self {
+    pub fn new(ast: &'a Program) -> Self {
         Self { ast }
     }
 
     /// Process the AST into a list of instructions
     /// Returns a list of instruction lists. One for each service.
-    fn process(&self) -> Result<Vec<Vec<Instruction>>, CodeGenError> {
+    pub fn process(&self) -> Result<Vec<Vec<Instruction>>, CodeGenError> {
         let mut instructions = vec![];
         for service in &self.ast.services {
             instructions.push(self.process_service(service)?);
@@ -42,6 +42,7 @@ impl<'a> CodeGenerator<'a> {
     fn process_service(&self, service: &'a Service) -> Result<Vec<Instruction>, CodeGenError> {
         let mut instructions = Vec::new();
         instructions.push(Instruction::Label(format!("start_{}", service.name)));
+        instructions.push(Instruction::Jump(format!("start_{}_main", service.name)));
         for method in &service.methods {
             instructions.extend(self.process_method(method));
         }
@@ -159,6 +160,7 @@ mod tests {
 
         let expected = vec![
             Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
             Instruction::Label("start_main_page".to_string()),
             Instruction::Push(StackValue::String("Main page".to_string())),
             Instruction::Stdout,
@@ -182,6 +184,7 @@ mod tests {
 
         let expected = vec![
             Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
             Instruction::Label("start_main_page".to_string()),
             Instruction::Push(StackValue::String("Main page".to_string())),
             Instruction::Stdout,
@@ -205,6 +208,7 @@ mod tests {
         let code = codes.first().unwrap();
         let expected = vec![
             Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
             Instruction::Label("start_main_page".to_string()),
             Instruction::Push(StackValue::String("Main page".to_string())),
             Instruction::Stdout,

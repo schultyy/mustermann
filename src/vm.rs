@@ -1,11 +1,6 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::FutureExt;
-use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
-use opentelemetry::{
-    trace::{SpanKind, TraceContextExt, Tracer},
-    Context,
-};
+use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, TracerProvider};
@@ -14,10 +9,7 @@ use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
 use tonic::metadata::{MetadataMap, MetadataValue};
 
-use crate::{
-    code_gen::instruction::{Instruction, StackValue},
-    vm_coordinator::ServiceMessage,
-};
+use crate::code_gen::instruction::{Instruction, StackValue};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VMError {
     StackUnderflow,
@@ -27,6 +19,9 @@ pub enum VMError {
     RemoteCallError,
     MissingLabel(String),
     MissingSpan,
+    PrintError(mpsc::error::SendError<PrintMessage>),
+    UnsupportedInstruction,
+    MaxExecutionCounterReached,
 }
 
 impl std::error::Error for VMError {}
@@ -41,20 +36,11 @@ impl std::fmt::Display for VMError {
             VMError::RemoteCallError => write!(f, "Remote call error"),
             VMError::MissingLabel(label) => write!(f, "Missing label: {}", label),
             VMError::MissingSpan => write!(f, "Missing span"),
+            VMError::PrintError(err) => write!(f, "Print error: {}", err),
+            VMError::UnsupportedInstruction => write!(f, "Unsupported instruction"),
+            VMError::MaxExecutionCounterReached => write!(f, "Max execution counter reached"),
         }
     }
-}
-
-pub struct VM {
-    code: Vec<Instruction>,
-    stack: Vec<StackValue>,
-    vars: HashMap<String, StackValue>,
-    ip: usize,
-    tx: Option<mpsc::Sender<ServiceMessage>>,
-    rx: Option<mpsc::Receiver<String>>,
-    message_check_counter: usize,
-    tracer: Option<TracerProvider>,
-    context: Option<Context>,
 }
 
 pub fn setup_tracer(
@@ -94,57 +80,58 @@ pub fn setup_tracer(
     Ok(provider)
 }
 
-impl VM {
-    pub fn with_tracer(
-        code: Vec<Instruction>,
-        tx: Option<mpsc::Sender<ServiceMessage>>,
-        rx: Option<mpsc::Receiver<String>>,
-        tracer: Option<TracerProvider>,
-    ) -> Result<Self, opentelemetry::trace::TraceError> {
-        Ok(Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrintMessage {
+    Stdout(String),
+    Stderr(String),
+}
+
+pub struct VM<'a> {
+    code: &'a Vec<Instruction>,
+    stack: Vec<StackValue>,
+    vars: HashMap<String, StackValue>,
+    ip: usize,
+    print_tx: mpsc::Sender<PrintMessage>,
+    max_execution_counter: Option<usize>,
+}
+
+impl<'a> VM<'a> {
+    pub fn new(code: &'a Vec<Instruction>, print_tx: mpsc::Sender<PrintMessage>) -> Self {
+        Self {
             code,
             stack: Vec::new(),
             vars: HashMap::new(),
             ip: 0,
-            context: None,
-            tx,
-            rx,
-            message_check_counter: 0,
-            tracer,
-        })
+            print_tx,
+            max_execution_counter: None,
+        }
+    }
+
+    pub fn with_max_execution_counter(mut self, max_execution_counter: usize) -> Self {
+        self.max_execution_counter = Some(max_execution_counter);
+        self
     }
 
     pub async fn run(&mut self) -> Result<(), VMError> {
+        let mut execution_counter = 0;
         while self.ip < self.code.len() {
             let instruction = self.code[self.ip].clone();
             self.ip += 1;
-            self.message_check_counter += 1;
-            if self.message_check_counter > 10000 {
-                if let Some(rx) = &mut self.rx {
-                    if let Ok(msg) = rx.try_recv() {
-                        self.handle_service_message(msg)?;
-                    }
-                }
-                self.message_check_counter = 0;
-            }
             self.execute_instruction(instruction).await?;
+            execution_counter += 1;
+            if let Some(max_execution_counter) = self.max_execution_counter {
+                if execution_counter > max_execution_counter {
+                    return Err(VMError::MaxExecutionCounterReached);
+                }
+            }
         }
-        Ok(())
-    }
-
-    fn handle_service_message(&mut self, msg: String) -> Result<(), VMError> {
-        self.ip = self
-            .code
-            .iter()
-            .position(|i| i == &Instruction::Label(msg.clone()))
-            .ok_or(VMError::MissingLabel(msg.clone()))?;
         Ok(())
     }
 
     async fn execute_instruction(&mut self, instruction: Instruction) -> Result<(), VMError> {
         match instruction {
             Instruction::Push(stack_value) => {
-                self.stack.push(stack_value.to_owned());
+                self.stack.push(stack_value);
             }
             Instruction::Pop => {
                 self.stack.pop();
@@ -157,7 +144,7 @@ impl VM {
                 }
             }
             Instruction::JmpIfZero(label) => {
-                let top = self.stack.last().ok_or(VMError::StackUnderflow)?;
+                let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 match top {
                     StackValue::Int(0) => {
                         self.ip = self
@@ -169,27 +156,27 @@ impl VM {
                     _ => {}
                 }
             }
-            Instruction::Label(_) => {
-                // Labels are used for jumps and are not executed
-            }
+            Instruction::Label(_) => { /* Labels are used for jumps and are not executed */ }
             Instruction::Stdout => {
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
                 match top {
                     StackValue::String(s) => {
-                        tracing::info!("{}: {}", name, s);
+                        self.print_tx
+                            .send(PrintMessage::Stdout(s))
+                            .await
+                            .map_err(VMError::PrintError)?;
                     }
-                    StackValue::Int(n) => {
-                        tracing::info!("{}: {}", name, n);
-                    }
+                    _ => return Err(VMError::InvalidStackValue),
                 }
             }
             Instruction::Stderr => {
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 match top {
                     StackValue::String(s) => {
-                        let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
-                        tracing::error!("{}: {}", name, s);
+                        self.print_tx
+                            .send(PrintMessage::Stderr(s))
+                            .await
+                            .map_err(VMError::PrintError)?;
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
@@ -217,7 +204,7 @@ impl VM {
                     .code
                     .iter()
                     .position(|i| i == &Instruction::Label(label.clone()))
-                    .ok_or(VMError::MissingLabel(label.clone()))?;
+                    .unwrap();
             }
             Instruction::Printf => {
                 let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
@@ -235,103 +222,282 @@ impl VM {
                 self.stack.push(StackValue::String(formatted));
             }
             Instruction::RemoteCall => {
-                if let Some(tx) = self.tx.as_ref() {
-                    let method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                    let service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-
-                    //find the previous label in code based on current
-                    let mut function_name = "default".into();
-                    for i in (0..self.ip).rev() {
-                        if matches!(self.code[i], Instruction::Label(_)) {
-                            match self.code[i].clone() {
-                                Instruction::Label(label) => function_name = label,
-                                _ => {}
-                            }
-                            break;
-                        }
-                    }
-
-                    let service_name = self.vars.get("name").unwrap();
-                    let service_name = service_name.to_string();
-                    if let Some(tracer_provider) = self.tracer.as_ref() {
-                        if let Some(otel_cx) = self.context.as_ref() {
-                            let tracer = tracer_provider.tracer(service_name.clone());
-                            let _span = tracer
-                                .span_builder(format!("{}/{}", service_name, function_name))
-                                .with_kind(SpanKind::Server)
-                                .with_context(otel_cx.clone());
-                        }
-                    }
-
-                    let service = match service {
-                        StackValue::String(s) => s,
-                        _ => return Err(VMError::InvalidStackValue),
-                    };
-                    let method = match method {
-                        StackValue::String(s) => s,
-                        _ => return Err(VMError::InvalidStackValue),
-                    };
-
-                    tx.send(ServiceMessage::Call {
-                        to: service,
-                        function: method,
-                        context: self.context.clone().unwrap_or_else(|| Context::current()),
-                    })
-                    .await
-                    .or(Err(VMError::RemoteCallError))?;
-
-                    tracing::info!("Remote call initiated");
-                }
+                return Err(VMError::UnsupportedInstruction);
             }
             Instruction::StartContext => {
-                if let Some(tracer_provider) = self.tracer.as_ref() {
-                    let service_name = self.vars.get("name").unwrap();
-                    let service_name = service_name.to_string();
-                    let mut metadata = HashMap::new();
-                    let tracer = tracer_provider.tracer(service_name.clone());
-                    let span = tracer
-                        .span_builder(format!("{}/{}", service_name, "start_context"))
-                        .with_kind(SpanKind::Server)
-                        .start(&tracer);
-                    let cx = Context::current_with_span(span);
-                    global::get_text_map_propagator(|propagator| {
-                        propagator.inject_context(&cx, &mut metadata)
-                    });
-                    self.context = Some(cx);
-                }
+                return Err(VMError::UnsupportedInstruction);
             }
-            Instruction::EndContext => match self.context.as_mut() {
-                Some(_) => {
-                    self.context = None;
-                }
-                None => {
-                    return Err(VMError::MissingSpan);
-                }
-            },
+            Instruction::EndContext => {
+                return Err(VMError::UnsupportedInstruction);
+            }
             Instruction::Nop => {}
-            Instruction::Call(_label) => {}
-            Instruction::Ret => {}
+            Instruction::Call(_) => {
+                return Err(VMError::UnsupportedInstruction);
+            }
+            Instruction::Ret => {
+                return Err(VMError::UnsupportedInstruction);
+            }
         }
         Ok(())
     }
 }
 
+// impl VM {
+//     pub fn with_tracer(
+//         code: Vec<Instruction>,
+//         tx: Option<mpsc::Sender<ServiceMessage>>,
+//         rx: Option<mpsc::Receiver<String>>,
+//         tracer: Option<TracerProvider>,
+//     ) -> Result<Self, opentelemetry::trace::TraceError> {
+//         Ok(Self {
+//             code,
+//             stack: Vec::new(),
+//             vars: HashMap::new(),
+//             ip: 0,
+//             context: None,
+//             tx,
+//             rx,
+//             message_check_counter: 0,
+//             tracer,
+//         })
+//     }
+
+//     pub async fn run(&mut self) -> Result<(), VMError> {
+//         while self.ip < self.code.len() {
+//             let instruction = self.code[self.ip].clone();
+//             self.ip += 1;
+//             self.message_check_counter += 1;
+//             if self.message_check_counter > 10000 {
+//                 if let Some(rx) = &mut self.rx {
+//                     if let Ok(msg) = rx.try_recv() {
+//                         self.handle_service_message(msg)?;
+//                     }
+//                 }
+//                 self.message_check_counter = 0;
+//             }
+//             self.execute_instruction(instruction).await?;
+//         }
+//         Ok(())
+//     }
+
+//     fn handle_service_message(&mut self, msg: String) -> Result<(), VMError> {
+//         self.ip = self
+//             .code
+//             .iter()
+//             .position(|i| i == &Instruction::Label(msg.clone()))
+//             .ok_or(VMError::MissingLabel(msg.clone()))?;
+//         Ok(())
+//     }
+
+//     async fn execute_instruction(&mut self, instruction: Instruction) -> Result<(), VMError> {
+//         match instruction {
+//             Instruction::Push(stack_value) => {
+//                 self.stack.push(stack_value.to_owned());
+//             }
+//             Instruction::Pop => {
+//                 self.stack.pop();
+//             }
+//             Instruction::Dec => {
+//                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+//                 match top {
+//                     StackValue::Int(n) => self.stack.push(StackValue::Int(n - 1)),
+//                     _ => return Err(VMError::InvalidStackValue),
+//                 }
+//             }
+//             Instruction::JmpIfZero(label) => {
+//                 let top = self.stack.last().ok_or(VMError::StackUnderflow)?;
+//                 match top {
+//                     StackValue::Int(0) => {
+//                         self.ip = self
+//                             .code
+//                             .iter()
+//                             .position(|i| i == &Instruction::Label(label.clone()))
+//                             .unwrap();
+//                     }
+//                     _ => {}
+//                 }
+//             }
+//             Instruction::Label(_) => {
+//                 // Labels are used for jumps and are not executed
+//             }
+//             Instruction::Stdout => {
+//                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+//                 let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
+//                 match top {
+//                     StackValue::String(s) => {
+//                         tracing::info!("{}: {}", name, s);
+//                     }
+//                     StackValue::Int(n) => {
+//                         tracing::info!("{}: {}", name, n);
+//                     }
+//                 }
+//             }
+//             Instruction::Stderr => {
+//                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+//                 match top {
+//                     StackValue::String(s) => {
+//                         let name = self.vars.get("name").ok_or(VMError::MissingAppName)?;
+//                         tracing::error!("{}: {}", name, s);
+//                     }
+//                     _ => return Err(VMError::InvalidStackValue),
+//                 }
+//             }
+//             Instruction::Sleep(ms) => {
+//                 std::thread::sleep(std::time::Duration::from_millis(ms));
+//             }
+//             Instruction::StoreVar(key, value) => {
+//                 self.vars
+//                     .insert(key.clone(), StackValue::String(value.clone()));
+//             }
+//             Instruction::LoadVar(key) => {
+//                 let value = self
+//                     .vars
+//                     .get(&key)
+//                     .ok_or(VMError::MissingVar(key.clone()))?;
+//                 self.stack.push(value.clone());
+//             }
+//             Instruction::Dup => {
+//                 let top = self.stack.last().ok_or(VMError::StackUnderflow)?;
+//                 self.stack.push(top.clone());
+//             }
+//             Instruction::Jump(label) => {
+//                 self.ip = self
+//                     .code
+//                     .iter()
+//                     .position(|i| i == &Instruction::Label(label.clone()))
+//                     .ok_or(VMError::MissingLabel(label.clone()))?;
+//             }
+//             Instruction::Printf => {
+//                 let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+//                 let template = match template {
+//                     StackValue::String(s) => s,
+//                     _ => return Err(VMError::InvalidStackValue),
+//                 };
+//                 let var = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+//                 let var = match var {
+//                     StackValue::String(s) => s,
+//                     _ => return Err(VMError::InvalidStackValue),
+//                 };
+
+//                 let formatted = template.replace("%s", &var);
+//                 self.stack.push(StackValue::String(formatted));
+//             }
+//             Instruction::RemoteCall => {
+//                 if let Some(tx) = self.tx.as_ref() {
+//                     let method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+//                     let service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+
+//                     //find the previous label in code based on current
+//                     let mut function_name = "default".into();
+//                     for i in (0..self.ip).rev() {
+//                         if matches!(self.code[i], Instruction::Label(_)) {
+//                             match self.code[i].clone() {
+//                                 Instruction::Label(label) => function_name = label,
+//                                 _ => {}
+//                             }
+//                             break;
+//                         }
+//                     }
+
+//                     let service_name = self.vars.get("name").unwrap();
+//                     let service_name = service_name.to_string();
+//                     if let Some(tracer_provider) = self.tracer.as_ref() {
+//                         if let Some(otel_cx) = self.context.as_ref() {
+//                             let tracer = tracer_provider.tracer(service_name.clone());
+//                             let _span = tracer
+//                                 .span_builder(format!("{}/{}", service_name, function_name))
+//                                 .with_kind(SpanKind::Server)
+//                                 .with_context(otel_cx.clone());
+//                         }
+//                     }
+
+//                     let service = match service {
+//                         StackValue::String(s) => s,
+//                         _ => return Err(VMError::InvalidStackValue),
+//                     };
+//                     let method = match method {
+//                         StackValue::String(s) => s,
+//                         _ => return Err(VMError::InvalidStackValue),
+//                     };
+
+//                     tx.send(ServiceMessage::Call {
+//                         to: service,
+//                         function: method,
+//                         context: self.context.clone().unwrap_or_else(|| Context::current()),
+//                     })
+//                     .await
+//                     .or(Err(VMError::RemoteCallError))?;
+
+//                     tracing::info!("Remote call initiated");
+//                 }
+//             }
+//             Instruction::StartContext => {
+//                 if let Some(tracer_provider) = self.tracer.as_ref() {
+//                     let service_name = self.vars.get("name").unwrap();
+//                     let service_name = service_name.to_string();
+//                     let mut metadata = HashMap::new();
+//                     let tracer = tracer_provider.tracer(service_name.clone());
+//                     let span = tracer
+//                         .span_builder(format!("{}/{}", service_name, "start_context"))
+//                         .with_kind(SpanKind::Server)
+//                         .start(&tracer);
+//                     let cx = Context::current_with_span(span);
+//                     global::get_text_map_propagator(|propagator| {
+//                         propagator.inject_context(&cx, &mut metadata)
+//                     });
+//                     self.context = Some(cx);
+//                 }
+//             }
+//             Instruction::EndContext => match self.context.as_mut() {
+//                 Some(_) => {
+//                     self.context = None;
+//                 }
+//                 None => {
+//                     return Err(VMError::MissingSpan);
+//                 }
+//             },
+//             Instruction::Nop => {}
+//             Instruction::Call(_label) => {}
+//             Instruction::Ret => {}
+//         }
+//         Ok(())
+//     }
+// }
+
 #[cfg(test)]
 mod tests {
+    use crate::{code_gen::CodeGenerator, parser};
+
     use super::*;
+
+    fn service() -> String {
+        "
+        service frontend {
+            method main_page {
+                print \"Main page\"
+            }
+        }
+        "
+        .to_string()
+    }
 
     #[tokio::test]
     async fn test_vm_run() {
-        let mut vm = VM::with_tracer(
-            vec![Instruction::StoreVar(
-                "name".to_string(),
-                "test".to_string(),
-            )],
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        vm.run().await.unwrap();
+        let service = service();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.first().unwrap();
+
+        let (print_tx, print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code, print_tx).with_max_execution_counter(10);
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert!(print_rx.is_empty(), "Print messages should be empty");
+                assert_eq!(e, VMError::MaxExecutionCounterReached);
+            }
+        }
     }
 }

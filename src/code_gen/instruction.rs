@@ -47,7 +47,10 @@ pub enum Instruction {
     /// ```
     /// will print "Hello, John!" if the name variable is "John"
     Printf,
-    /// Remote call
+    /// Remote call, expected stack layout:
+    /// ```
+    /// [service_name, method_name]
+    /// ```
     RemoteCall,
     /// Start a new OpenTelemetry context
     StartContext,

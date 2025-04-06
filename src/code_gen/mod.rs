@@ -50,7 +50,7 @@ impl<'a> CodeGenerator<'a> {
         instructions.push(Instruction::Label(format!("start_{}", service.name)));
         instructions.push(Instruction::Jump(format!("start_{}_main", service.name)));
         for method in &service.methods {
-            instructions.extend(self.process_method(method));
+            instructions.extend(self.process_method(method)?);
         }
         instructions.push(Instruction::Label(format!("start_{}_main", service.name)));
         if let Some(loop_def) = service.loops.first() {
@@ -94,7 +94,7 @@ impl<'a> CodeGenerator<'a> {
         Ok(())
     }
 
-    fn process_method(&self, method: &'a Method) -> Vec<Instruction> {
+    fn process_method(&self, method: &'a Method) -> Result<Vec<Instruction>, CodeGenError> {
         let mut instructions = Vec::new();
         instructions.push(Instruction::Label(format!("start_{}", method.name)));
         for statement in &method.statements {
@@ -106,7 +106,16 @@ impl<'a> CodeGenerator<'a> {
                     instructions.push(Instruction::Sleep(duration.as_millis() as u64));
                 }
                 Statement::Call { service, method } => {
-                    // instructions.push(Instruction::Call(service.clone(), method.clone()));
+                    if let Some(service) = service {
+                        instructions.push(Instruction::Push(StackValue::String(service.clone())));
+                        instructions.push(Instruction::Push(StackValue::String(method.clone())));
+                        instructions.push(Instruction::RemoteCall);
+                    } else {
+                        return Err(CodeGenError::InvalidStatement(format!(
+                            "Expected Remote Call - Got {}",
+                            statement.to_string()
+                        )));
+                    }
                 }
                 Statement::Stderr { message, args } => {
                     instructions.extend(self.process_print(message, args, PrintType::Stderr));
@@ -115,7 +124,7 @@ impl<'a> CodeGenerator<'a> {
         }
         instructions.push(Instruction::Ret);
         instructions.push(Instruction::Label(format!("end_{}", method.name)));
-        instructions
+        Ok(instructions)
     }
 
     fn process_print(
@@ -237,6 +246,46 @@ mod tests {
             method get_products {
                 stderr \"Fetching product orders %s\" with []
                 sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn call_other_service() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+
+        service frontend {
+            method main_page {
+                call products.get_products
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn call_other_service_without_loop() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+
+        service frontend {
+            method main_page {
+                call products.get_products
             }
         }
         "
@@ -424,5 +473,105 @@ mod tests {
             Instruction::Label("end_products".to_string()),
         ];
         assert_eq!(code, &expected);
+    }
+
+    #[test]
+    fn test_call_other_service() {
+        let service = call_other_service();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let products_code = codes.first().unwrap();
+        let frontend_code = codes.last().unwrap();
+
+        let expected_products = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::Nop,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(products_code, &expected_products);
+
+        let expected_frontend = vec![
+            Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("start_main_page".to_string()),
+            Instruction::Push(StackValue::String("products".to_string())),
+            Instruction::Push(StackValue::String("get_products".to_string())),
+            Instruction::RemoteCall,
+            Instruction::Ret,
+            Instruction::Label("end_main_page".to_string()),
+            Instruction::Label("start_frontend_main".to_string()),
+            Instruction::Label("start_loop".to_string()),
+            Instruction::Call("start_main_page".to_string()),
+            Instruction::Jump("start_loop".to_string()),
+            Instruction::Label("end_loop".to_string()),
+            Instruction::Label("end_frontend_main".to_string()),
+            Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(frontend_code, &expected_frontend);
+    }
+
+    #[test]
+    fn test_call_other_service_without_loop() {
+        let service = call_other_service_without_loop();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let products_code = codes.first().unwrap();
+        let frontend_code = codes.last().unwrap();
+
+        let expected_products = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::Nop,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(products_code, &expected_products);
+
+        let expected_frontend = vec![
+            Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("start_main_page".to_string()),
+            Instruction::Push(StackValue::String("products".to_string())),
+            Instruction::Push(StackValue::String("get_products".to_string())),
+            Instruction::RemoteCall,
+            Instruction::Ret,
+            Instruction::Label("end_main_page".to_string()),
+            Instruction::Label("start_frontend_main".to_string()),
+            Instruction::Nop,
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("end_frontend_main".to_string()),
+            Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(frontend_code, &expected_frontend);
     }
 }

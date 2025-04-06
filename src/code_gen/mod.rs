@@ -4,8 +4,6 @@ use crate::parser::{Method, Program, Service, Statement};
 
 pub mod error;
 pub mod instruction;
-pub mod log_byte_code;
-pub mod service_byte_code;
 
 #[derive(Debug, Clone)]
 pub enum CodeGenError {

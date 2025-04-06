@@ -1,3 +1,5 @@
+use std::fs;
+
 use ::futures::future::join_all;
 use clap::Parser;
 use code_gen::{log_byte_code::LogByteCodeGenerator, service_byte_code::ServiceByteCodeGenerator};
@@ -11,6 +13,7 @@ mod code_gen;
 mod config;
 mod metadata_map;
 mod otel;
+mod parser;
 mod runtime_error;
 mod vm;
 mod vm_coordinator;
@@ -33,28 +36,32 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    if let Some(otel_endpoint) = args.otel_endpoint.clone() {
-        println!("Setting up otel: {}", otel_endpoint);
-        otel::setup_otlp(&otel_endpoint, &args.service_name)?;
-    } else {
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "info".into()),
-            )
-            .with(tracing_subscriber::fmt::layer())
-            .init();
-    }
     let file_path = args.file_path.clone();
-    let config = config::Config::from_file(&file_path)?;
-    if args.print_code {
-        print_code(&config);
-    } else {
-        let config_clone = config.clone();
-        execute_services(&args, config_clone).await?;
-        let config_clone = config.clone();
-        execute_logs(config_clone).await?;
-    }
+    let file_content = fs::read_to_string(&file_path)?;
+    let ast = parser::parse(&file_content)?;
+    println!("AST: {:?}", ast);
+    // if let Some(otel_endpoint) = args.otel_endpoint.clone() {
+    //     println!("Setting up otel: {}", otel_endpoint);
+    //     otel::setup_otlp(&otel_endpoint, &args.service_name)?;
+    // } else {
+    //     tracing_subscriber::registry()
+    //         .with(
+    //             tracing_subscriber::EnvFilter::try_from_default_env()
+    //                 .unwrap_or_else(|_| "info".into()),
+    //         )
+    //         .with(tracing_subscriber::fmt::layer())
+    //         .init();
+    // }
+    // let file_path = args.file_path.clone();
+    // let config = config::Config::from_file(&file_path)?;
+    // if args.print_code {
+    //     print_code(&config);
+    // } else {
+    //     let config_clone = config.clone();
+    //     execute_services(&args, config_clone).await?;
+    //     let config_clone = config.clone();
+    //     execute_logs(config_clone).await?;
+    // }
     Ok(())
 }
 

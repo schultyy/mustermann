@@ -11,16 +11,17 @@ tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 clap = { version = "4.4", features = ["derive"] }
 fake = { version = "4", features = ["derive"] }
-tracing-opentelemetry = "0.28.0"
-opentelemetry = "0.27"
-opentelemetry-otlp = "0.27.0"
-opentelemetry_sdk = { version = "0.27.1", features = [
-  "opentelemetry-http",
+tracing-opentelemetry = "0.29.0"
+opentelemetry = "0.29.0"
+opentelemetry-otlp = { version = "0.29.0", features = ["tonic", "grpc-tonic"] }
+opentelemetry_sdk = { version = "0.29.0", features = [
   "rt-tokio",
+  "tokio",
+  "opentelemetry-http",
 ] }
 tonic = "0.12.3"
-opentelemetry-appender-tracing = "0.27"
-opentelemetry-stdout = "0.27.0"
+opentelemetry-appender-tracing = "0.29.0"
+opentelemetry-stdout = "0.29.0"
 tokio = { version = "1.43.0", features = ["full"] }
 futures = "0.3"
 rand = "0.9.0"

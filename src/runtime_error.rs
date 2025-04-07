@@ -10,7 +10,7 @@ pub enum RuntimeError {
     ConfigError(config::ConfigError),
     ByteCodeError(ByteCodeError),
     ServiceError(JoinError),
-    InitTraceError(opentelemetry::trace::TraceError),
+    InitTraceError(opentelemetry_otlp::ExporterBuildError),
 }
 
 impl std::error::Error for RuntimeError {}

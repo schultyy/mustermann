@@ -1,8 +1,7 @@
-use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig};
+use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::{logs::LoggerProvider, runtime};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tonic::metadata::MetadataMap;
 use tracing_subscriber::layer::SubscriberExt;
@@ -11,7 +10,7 @@ use tracing_subscriber::prelude::*;
 pub fn setup_otlp(
     endpoint: &str,
     service_name: &str,
-) -> Result<LoggerProvider, Box<dyn std::error::Error>> {
+) -> Result<SdkLoggerProvider, Box<dyn std::error::Error>> {
     let mut metadata = MetadataMap::new();
     metadata.insert(SERVICE_NAME, service_name.parse().unwrap());
     let exporter = LogExporter::builder()
@@ -19,14 +18,17 @@ pub fn setup_otlp(
         .with_endpoint(endpoint)
         .with_metadata(metadata)
         .build()?;
-    let logger_provider = LoggerProvider::builder()
-        .with_batch_exporter(exporter, runtime::Tokio)
-        .with_resource(Resource::new_with_defaults(vec![KeyValue::new(
-            SERVICE_NAME,
-            service_name.to_string(),
-        )]))
+
+    let provider: SdkLoggerProvider = SdkLoggerProvider::builder()
+        .with_resource(
+            Resource::builder()
+                .with_service_name(service_name.to_string())
+                .build(),
+        )
+        .with_batch_exporter(exporter)
         .build();
-    let layer = OpenTelemetryTracingBridge::new(&logger_provider);
+
+    let layer = OpenTelemetryTracingBridge::new(&provider);
 
     tracing_subscriber::registry()
         .with(
@@ -35,5 +37,5 @@ pub fn setup_otlp(
         .with(tracing_subscriber::fmt::layer().json())
         .with(layer)
         .init();
-    Ok(logger_provider)
+    Ok(provider)
 }

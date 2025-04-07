@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::{FutureExt, TraceContextExt};
+use opentelemetry::trace::{FutureExt, TraceContextExt, TracerProvider};
 use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
 use opentelemetry::{
     trace::{SpanKind, Tracer},
@@ -8,7 +8,8 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, TracerProvider};
+use opentelemetry_sdk::trace::SdkTracerProvider;
+// use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, TracerProvider};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
@@ -64,7 +65,7 @@ impl std::fmt::Display for VMError {
 pub fn setup_tracer(
     endpoint: &str,
     service_name: &str,
-) -> Result<TracerProvider, opentelemetry::trace::TraceError> {
+) -> Result<SdkTracerProvider, opentelemetry_otlp::ExporterBuildError> {
     let mut map = MetadataMap::with_capacity(3);
 
     map.insert("x-application", service_name.parse().unwrap());
@@ -72,7 +73,6 @@ pub fn setup_tracer(
         "trace-proto-bin",
         MetadataValue::from_bytes(b"[binary data]"),
     );
-
     let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .with_export_config(opentelemetry_otlp::ExportConfig {
@@ -83,16 +83,14 @@ pub fn setup_tracer(
         .with_metadata(map)
         .build()?;
 
-    let provider = Builder::default()
-        .with_id_generator(RandomIdGenerator::default())
-        .with_max_events_per_span(64)
-        .with_max_attributes_per_span(16)
-        .with_resource(Resource::new(vec![KeyValue::new(
-            SERVICE_NAME,
-            service_name.to_string(),
-        )]))
-        .with_batch_exporter(otlp_exporter, opentelemetry_sdk::runtime::Tokio)
+    let resource = Resource::builder()
+        .with_attribute(KeyValue::new(SERVICE_NAME, service_name.to_string()))
         .build();
+    let provider = SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_simple_exporter(otlp_exporter)
+        .build();
+
     // Then pass it into provider builder
     global::set_text_map_propagator(TraceContextPropagator::new());
     Ok(provider)
@@ -117,7 +115,7 @@ pub struct VM {
     remote_call_counter: usize,
     remote_call_limit: usize,
     service_name: String,
-    tracer: Option<TracerProvider>,
+    tracer: Option<SdkTracerProvider>,
     otel_context: Option<opentelemetry::Context>,
 }
 
@@ -165,7 +163,7 @@ impl VM {
         self
     }
 
-    pub fn with_tracer(mut self, tracer: TracerProvider) -> Self {
+    pub fn with_tracer(mut self, tracer: SdkTracerProvider) -> Self {
         self.tracer = Some(tracer);
         self
     }

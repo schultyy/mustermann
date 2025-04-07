@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use opentelemetry::trace::{Span, SpanKind, Status, Tracer};
 use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
-use opentelemetry_sdk::trace;
+use opentelemetry_sdk::trace::{self, SdkTracerProvider};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
 
@@ -17,7 +17,7 @@ pub enum ServiceMessage {
 
 struct Service {
     sender: mpsc::Sender<String>,
-    trace_provider: Option<trace::TracerProvider>,
+    trace_provider: Option<SdkTracerProvider>,
 }
 
 pub struct ServiceCoordinator {
@@ -101,7 +101,7 @@ impl ServiceCoordinator {
         &mut self,
         name: String,
         tx: mpsc::Sender<String>,
-        tracer: Option<trace::TracerProvider>,
+        tracer: Option<SdkTracerProvider>,
     ) {
         self.services.insert(
             name,

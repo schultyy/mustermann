@@ -60,7 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(logger_provider) = logger_provider {
         logger_provider.shutdown()?;
     }
-    opentelemetry::global::shutdown_tracer_provider();
+    opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .build()
+        .shutdown()?;
 
     Ok(())
 }
@@ -114,7 +116,7 @@ async fn execute_service(
     otel_endpoint: &str,
 ) -> Result<Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>>, RuntimeError> {
     let (print_tx, mut print_rx) = mpsc::channel(1);
-    let (remote_call_tx, mut remote_call_rx) = mpsc::channel(1);
+    let (remote_call_tx, remote_call_rx) = mpsc::channel(1);
 
     let tracer = vm::setup_tracer(&otel_endpoint, &service_name)
         .map_err(|e| RuntimeError::InitTraceError(e))?;

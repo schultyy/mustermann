@@ -63,9 +63,9 @@ fn print_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let file_path = args.file_path.clone();
     let file_content = fs::read_to_string(&file_path)?;
     let ast = parser::parse(&file_content)?;
-    let codes = CodeGenerator::new(&ast).process()?;
-    for code in codes {
-        let rows: Vec<AnnotatedInstruction> = code.iter().map(|i| i.into()).collect::<Vec<_>>();
+    for service in ast.services {
+        let codes = CodeGenerator::new(&service).process()?;
+        let rows: Vec<AnnotatedInstruction> = codes.iter().map(|i| i.into()).collect::<Vec<_>>();
         let mut table = tabled::Table::new(rows);
         println!("{}", table.with(tabled::settings::Style::sharp()));
     }
@@ -76,23 +76,32 @@ async fn execute_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let file_path = args.file_path.clone();
     let file_content = fs::read_to_string(&file_path)?;
     let ast = parser::parse(&file_content)?;
-    let codes = CodeGenerator::new(&ast).process()?;
     let mut handles: Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>> = Vec::new();
-
-    for service_code in codes {
-        let service_code = service_code.clone();
-        let service_handles = execute_service(service_code).await;
+    let mut coordinator = vm_coordinator::ServiceCoordinator::new();
+    for service in ast.services {
+        let service_code = CodeGenerator::new(&service).process()?;
+        let service_handles = execute_service(&service.name, service_code, &mut coordinator).await;
         handles.extend(service_handles);
     }
+    let coordinator_handle = tokio::spawn(async move {
+        coordinator.run().await;
+        Ok(())
+    });
+    handles.push(coordinator_handle);
     join_all(handles).await;
     Ok(())
 }
 
 async fn execute_service(
+    service_name: &str,
     service_code: Vec<Instruction>,
+    coordinator: &mut vm_coordinator::ServiceCoordinator,
 ) -> Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>> {
     let (print_tx, mut print_rx) = mpsc::channel(1);
-    let mut vm = vm::VM::new(service_code.clone(), print_tx);
+    let (remote_call_tx, mut remote_call_rx) = mpsc::channel(1);
+    coordinator.add_service(service_name.to_string(), remote_call_tx.clone());
+    let mut vm = vm::VM::new(service_code.clone(), print_tx)
+        .with_remote_call_tx(coordinator.get_main_tx().clone());
     let mut handles = Vec::new();
     let print_handle = tokio::spawn(async move {
         while let Some(message) = print_rx.recv().await {

@@ -98,6 +98,9 @@ pub struct VM {
     max_execution_counter: Option<usize>,
     return_addresses: Vec<usize>,
     remote_call_tx: Option<mpsc::Sender<ServiceMessage>>,
+    remote_call_rx: Option<mpsc::Receiver<String>>,
+    remote_call_counter: usize,
+    remote_call_limit: usize,
 }
 
 impl VM {
@@ -111,6 +114,9 @@ impl VM {
             max_execution_counter: None,
             return_addresses: Vec::new(),
             remote_call_tx: None,
+            remote_call_rx: None,
+            remote_call_counter: 0,
+            remote_call_limit: 10000,
         }
     }
 
@@ -124,17 +130,46 @@ impl VM {
         self
     }
 
+    pub fn with_remote_call_rx(mut self, remote_call_rx: mpsc::Receiver<String>) -> Self {
+        self.remote_call_rx = Some(remote_call_rx);
+        self
+    }
+
+    pub fn with_custom_remote_call_limit(mut self, limit: usize) -> Self {
+        self.remote_call_limit = limit;
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), VMError> {
         let mut execution_counter = 0;
         while self.ip < self.code.len() {
-            let instruction = self.code[self.ip].clone();
             self.ip += 1;
+            self.handle_remote_call().await?;
+            let instruction = self.code[self.ip].clone();
             self.execute_instruction(instruction).await?;
             execution_counter += 1;
             if let Some(max_execution_counter) = self.max_execution_counter {
                 if execution_counter > max_execution_counter {
                     return Err(VMError::MaxExecutionCounterReached);
                 }
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_remote_call(&mut self) -> Result<(), VMError> {
+        if let Some(remote_call_rx) = &mut self.remote_call_rx {
+            self.remote_call_counter += 1;
+            if self.remote_call_counter > self.remote_call_limit {
+                if let Ok(msg) = remote_call_rx.try_recv() {
+                    self.return_addresses.push(self.ip);
+                    self.ip = self
+                        .code
+                        .iter()
+                        .position(|i| i == &Instruction::Label(msg.clone()))
+                        .ok_or(VMError::MissingLabel(msg.clone()))?;
+                }
+                self.remote_call_counter = 0;
             }
         }
         Ok(())
@@ -611,8 +646,7 @@ mod tests {
     async fn test_vm_run() {
         let service = service();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let (print_tx, print_rx) = mpsc::channel(10);
         let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(10);
@@ -631,11 +665,10 @@ mod tests {
     async fn test_vm_with_local_call() {
         let service = service_with_local_call();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let (print_tx, mut print_rx) = mpsc::channel(10);
-        let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(40);
+        let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(30);
         match vm.run().await {
             Ok(_) => {
                 assert!(false, "VM should have reached max execution counter");
@@ -658,8 +691,7 @@ mod tests {
     async fn test_vm_with_print_template() {
         let service = service_with_print_template();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let (print_tx, mut print_rx) = mpsc::channel(10);
         let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(15);
@@ -688,8 +720,7 @@ mod tests {
     async fn test_vm_with_stderr_template() {
         let service = service_with_stderr_template();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let (print_tx, mut print_rx) = mpsc::channel(10);
         let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(15);
@@ -718,8 +749,7 @@ mod tests {
     async fn test_vm_with_broken_template() {
         let service = service_with_broken_template();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let (print_tx, print_rx) = mpsc::channel(10);
         let mut vm = VM::new(code.clone(), print_tx).with_max_execution_counter(10);
@@ -738,8 +768,7 @@ mod tests {
     async fn test_vm_with_remote_call_tx() {
         let service = call_other_service();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.last().unwrap(); // last code is the frontend code that invokes the other service
+        let code = CodeGenerator::new(&ast.services[1]).process().unwrap();
         let mut vm = VM::new(code.clone(), mpsc::channel(10).0).with_max_execution_counter(10);
         match vm.run().await {
             Ok(_) => {
@@ -758,8 +787,7 @@ mod tests {
     async fn test_vm_with_remote_call() {
         let service = call_other_service();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.last().unwrap(); // last code is the frontend code that invokes the other service
+        let code = CodeGenerator::new(&ast.services[1]).process().unwrap();
 
         let (print_tx, _print_rx) = mpsc::channel(5);
         let (remote_call_tx, mut remote_call_rx) = mpsc::channel(10);
@@ -788,6 +816,40 @@ mod tests {
                         assert!(false, "Remote call message should be a call");
                     }
                 }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_with_remote_call_and_receiver() {
+        let service = call_other_service();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
+
+        let (print_tx, mut print_rx) = mpsc::channel(5);
+        let (remote_call_tx, remote_call_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), print_tx)
+            .with_max_execution_counter(15)
+            .with_custom_remote_call_limit(1)
+            .with_remote_call_rx(remote_call_rx);
+
+        remote_call_tx
+            .send("start_get_products".to_string())
+            .await
+            .unwrap();
+
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::MaxExecutionCounterReached);
+                assert_eq!(print_rx.len(), 2);
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stdout("Fetching product orders 12345".to_string())
+                );
             }
         }
     }

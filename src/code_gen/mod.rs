@@ -27,22 +27,16 @@ pub enum PrintType {
 }
 
 pub struct CodeGenerator<'a> {
-    ast: &'a Program,
+    ast: &'a Service,
 }
 
 impl<'a> CodeGenerator<'a> {
-    pub fn new(ast: &'a Program) -> Self {
+    pub fn new(ast: &'a Service) -> Self {
         Self { ast }
     }
 
-    /// Process the AST into a list of instructions
-    /// Returns a list of instruction lists. One for each service.
-    pub fn process(&self) -> Result<Vec<Vec<Instruction>>, CodeGenError> {
-        let mut instructions = vec![];
-        for service in &self.ast.services {
-            instructions.push(self.process_service(service)?);
-        }
-        Ok(instructions)
+    pub fn process(&self) -> Result<Vec<Instruction>, CodeGenError> {
+        self.process_service(self.ast)
     }
 
     fn process_service(&self, service: &'a Service) -> Result<Vec<Instruction>, CodeGenError> {
@@ -296,8 +290,7 @@ mod tests {
     fn test_log_byte_code() {
         let service = service();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let expected = vec![
             Instruction::Label("start_frontend".to_string()),
@@ -313,15 +306,14 @@ mod tests {
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
-        assert_eq!(code, &expected);
+        assert_eq!(code, expected);
     }
 
     #[test]
     fn test_service_with_sleep() {
         let service = service_with_sleep();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let expected = vec![
             Instruction::Label("start_frontend".to_string()),
@@ -338,15 +330,14 @@ mod tests {
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
-        assert_eq!(code, &expected);
+        assert_eq!(code, expected);
     }
 
     #[test]
     fn test_service_with_main() {
         let service = service_with_main();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
         let expected = vec![
             Instruction::Label("start_frontend".to_string()),
             Instruction::Jump("start_frontend_main".to_string()),
@@ -364,15 +355,14 @@ mod tests {
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
-        assert_eq!(code, &expected);
+        assert_eq!(code, expected);
     }
 
     #[test]
     fn test_service_with_template() {
         let service = service_with_template();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let expected = vec![
             Instruction::Label("start_products".to_string()),
@@ -395,15 +385,14 @@ mod tests {
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
-        assert_eq!(code, &expected);
+        assert_eq!(code, expected);
     }
 
     #[test]
     fn test_service_with_template_and_empty_var_list() {
         let service = service_with_template_and_empty_var_list();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let expected = vec![
             Instruction::Label("start_products".to_string()),
@@ -418,15 +407,14 @@ mod tests {
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
-        assert_eq!(code, &expected);
+        assert_eq!(code, expected);
     }
 
     #[test]
     fn test_service_with_stderr_template() {
         let service = service_with_stderr_template();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let expected = vec![
             Instruction::Label("start_products".to_string()),
@@ -449,15 +437,14 @@ mod tests {
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
-        assert_eq!(code, &expected);
+        assert_eq!(code, expected);
     }
 
     #[test]
     fn test_service_with_stderr_template_and_empty_var_list() {
         let service = service_with_stderr_template_and_empty_var_list();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let code = codes.first().unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
         let expected = vec![
             Instruction::Label("start_products".to_string()),
@@ -472,16 +459,15 @@ mod tests {
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
-        assert_eq!(code, &expected);
+        assert_eq!(code, expected);
     }
 
     #[test]
     fn test_call_other_service() {
         let service = call_other_service();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let products_code = codes.first().unwrap();
-        let frontend_code = codes.last().unwrap();
+        let products_code = CodeGenerator::new(&ast.services[0]).process().unwrap();
+        let frontend_code = CodeGenerator::new(&ast.services[1]).process().unwrap();
 
         let expected_products = vec![
             Instruction::Label("start_products".to_string()),
@@ -504,7 +490,7 @@ mod tests {
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
-        assert_eq!(products_code, &expected_products);
+        assert_eq!(products_code, expected_products);
 
         let expected_frontend = vec![
             Instruction::Label("start_frontend".to_string()),
@@ -523,16 +509,15 @@ mod tests {
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
-        assert_eq!(frontend_code, &expected_frontend);
+        assert_eq!(frontend_code, expected_frontend);
     }
 
     #[test]
     fn test_call_other_service_without_loop() {
         let service = call_other_service_without_loop();
         let ast = parser::parse(&service).unwrap();
-        let codes = CodeGenerator::new(&ast).process().unwrap();
-        let products_code = codes.first().unwrap();
-        let frontend_code = codes.last().unwrap();
+        let products_code = CodeGenerator::new(&ast.services[0]).process().unwrap();
+        let frontend_code = CodeGenerator::new(&ast.services[1]).process().unwrap();
 
         let expected_products = vec![
             Instruction::Label("start_products".to_string()),
@@ -555,7 +540,7 @@ mod tests {
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
-        assert_eq!(products_code, &expected_products);
+        assert_eq!(products_code, expected_products);
 
         let expected_frontend = vec![
             Instruction::Label("start_frontend".to_string()),
@@ -572,6 +557,6 @@ mod tests {
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
-        assert_eq!(frontend_code, &expected_frontend);
+        assert_eq!(frontend_code, expected_frontend);
     }
 }

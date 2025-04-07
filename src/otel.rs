@@ -9,13 +9,15 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
 
 pub fn setup_otlp(
-    service_name: &str,
     endpoint: &str,
+    service_name: &str,
 ) -> Result<LoggerProvider, Box<dyn std::error::Error>> {
+    let mut metadata = MetadataMap::new();
+    metadata.insert(SERVICE_NAME, service_name.parse().unwrap());
     let exporter = LogExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint)
-        .with_metadata(MetadataMap::new())
+        .with_metadata(metadata)
         .build()?;
     let logger_provider = LoggerProvider::builder()
         .with_batch_exporter(exporter, runtime::Tokio)
@@ -28,7 +30,7 @@ pub fn setup_otlp(
 
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "INFO".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .with(layer)

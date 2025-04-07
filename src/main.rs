@@ -37,10 +37,10 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let mut logger_provider = None;
 
     if let Some(otel_endpoint) = args.otel_endpoint.clone() {
-        println!("Setting up otel: {}", otel_endpoint);
-        otel::setup_otlp(&otel_endpoint, &args.service_name)?;
+        logger_provider = Some(otel::setup_otlp(&otel_endpoint, &args.service_name)?);
     } else {
         tracing_subscriber::registry()
             .with(
@@ -56,6 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         execute_code(&args).await?;
     }
+
+    if let Some(logger_provider) = logger_provider {
+        logger_provider.shutdown()?;
+    }
+    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }

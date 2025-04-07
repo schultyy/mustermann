@@ -10,13 +10,14 @@ use tokio::sync::mpsc;
 use tonic::metadata::{MetadataMap, MetadataValue};
 
 use crate::code_gen::instruction::{Instruction, StackValue};
+use crate::vm_coordinator::ServiceMessage;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VMError {
     StackUnderflow,
     InvalidStackValue,
     MissingAppName,
     MissingVar(String),
-    RemoteCallError,
+    RemoteCallError(String),
     MissingLabel(String),
     MissingSpan,
     PrintError(mpsc::error::SendError<PrintMessage>),
@@ -34,7 +35,7 @@ impl std::fmt::Display for VMError {
             VMError::InvalidStackValue => write!(f, "Invalid stack value"),
             VMError::MissingAppName => write!(f, "Missing app name"),
             VMError::MissingVar(var) => write!(f, "Missing variable: {}", var),
-            VMError::RemoteCallError => write!(f, "Remote call error"),
+            VMError::RemoteCallError(msg) => write!(f, "Remote call error: {}", msg),
             VMError::MissingLabel(label) => write!(f, "Missing label: {}", label),
             VMError::MissingSpan => write!(f, "Missing span"),
             VMError::PrintError(err) => write!(f, "Print error: {}", err),
@@ -96,6 +97,7 @@ pub struct VM {
     print_tx: mpsc::Sender<PrintMessage>,
     max_execution_counter: Option<usize>,
     return_addresses: Vec<usize>,
+    remote_call_tx: Option<mpsc::Sender<ServiceMessage>>,
 }
 
 impl VM {
@@ -108,11 +110,17 @@ impl VM {
             print_tx,
             max_execution_counter: None,
             return_addresses: Vec::new(),
+            remote_call_tx: None,
         }
     }
 
     pub fn with_max_execution_counter(mut self, max_execution_counter: usize) -> Self {
         self.max_execution_counter = Some(max_execution_counter);
+        self
+    }
+
+    pub fn with_remote_call_tx(mut self, remote_call_tx: mpsc::Sender<ServiceMessage>) -> Self {
+        self.remote_call_tx = Some(remote_call_tx);
         self
     }
 
@@ -232,7 +240,22 @@ impl VM {
                 }
             }
             Instruction::RemoteCall => {
-                return Err(VMError::UnsupportedInstruction);
+                if let Some(remote_call_tx) = self.remote_call_tx.as_ref() {
+                    let method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                    let service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                    remote_call_tx
+                        .send(ServiceMessage::Call {
+                            to: service.to_string(),
+                            function: method.to_string(),
+                            context: opentelemetry::Context::current(),
+                        })
+                        .await
+                        .map_err(|e| VMError::RemoteCallError(e.to_string()))?;
+                } else {
+                    return Err(VMError::RemoteCallError(
+                        "Remote call tx not set".to_string(),
+                    ));
+                }
             }
             Instruction::StartContext => {
                 return Err(VMError::UnsupportedInstruction);
@@ -562,6 +585,28 @@ mod tests {
         .to_string()
     }
 
+    fn call_other_service() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+
+        service frontend {
+            method main_page {
+                call products.get_products
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
     #[tokio::test]
     async fn test_vm_run() {
         let service = service();
@@ -685,6 +730,64 @@ mod tests {
             Err(e) => {
                 assert_eq!(e, VMError::InvalidTemplate("Main page".to_string()));
                 assert_eq!(print_rx.len(), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_with_remote_call_tx() {
+        let service = call_other_service();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.last().unwrap(); // last code is the frontend code that invokes the other service
+        let mut vm = VM::new(code.clone(), mpsc::channel(10).0).with_max_execution_counter(10);
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(
+                    e,
+                    VMError::RemoteCallError("Remote call tx not set".to_string())
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_with_remote_call() {
+        let service = call_other_service();
+        let ast = parser::parse(&service).unwrap();
+        let codes = CodeGenerator::new(&ast).process().unwrap();
+        let code = codes.last().unwrap(); // last code is the frontend code that invokes the other service
+
+        let (print_tx, _print_rx) = mpsc::channel(5);
+        let (remote_call_tx, mut remote_call_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), print_tx)
+            .with_max_execution_counter(10)
+            .with_remote_call_tx(remote_call_tx);
+
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::MaxExecutionCounterReached);
+                assert_eq!(remote_call_rx.len(), 1);
+                let remote_call_messages = remote_call_rx.recv().await.unwrap();
+                match remote_call_messages {
+                    ServiceMessage::Call {
+                        to,
+                        function,
+                        context: _,
+                    } => {
+                        assert_eq!(to, "products".to_string());
+                        assert_eq!(function, "get_products".to_string());
+                    }
+                    _ => {
+                        assert!(false, "Remote call message should be a call");
+                    }
+                }
             }
         }
     }

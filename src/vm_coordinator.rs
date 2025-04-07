@@ -53,7 +53,7 @@ impl ServiceCoordinator {
 
                     service
                         .sender
-                        .send(function)
+                        .send(format!("start_{}", function))
                         .await
                         .unwrap_or_else(|_| println!("Error sending message"));
                 } else {

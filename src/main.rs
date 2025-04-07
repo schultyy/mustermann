@@ -101,7 +101,8 @@ async fn execute_service(
     let (remote_call_tx, mut remote_call_rx) = mpsc::channel(1);
     coordinator.add_service(service_name.to_string(), remote_call_tx.clone());
     let mut vm = vm::VM::new(service_code.clone(), print_tx)
-        .with_remote_call_tx(coordinator.get_main_tx().clone());
+        .with_remote_call_tx(coordinator.get_main_tx().clone())
+        .with_remote_call_rx(remote_call_rx);
     let mut handles = Vec::new();
     let print_handle = tokio::spawn(async move {
         while let Some(message) = print_rx.recv().await {

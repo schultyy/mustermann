@@ -47,12 +47,14 @@ impl<'a> CodeGenerator<'a> {
             instructions.extend(self.process_method(method)?);
         }
         instructions.push(Instruction::Label(format!("start_{}_main", service.name)));
+        instructions.push(Instruction::StartContext);
         if let Some(loop_def) = service.loops.first() {
             self.process_loop(&mut instructions, &loop_def)?;
         } else {
             instructions.push(Instruction::CheckInterrupt);
             instructions.push(Instruction::Jump(format!("start_{}_main", service.name)));
         }
+        instructions.push(Instruction::EndContext);
         instructions.push(Instruction::Label(format!("end_{}_main", service.name)));
         instructions.push(Instruction::Label(format!("end_{}", service.name)));
         Ok(instructions)
@@ -301,8 +303,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_main_page".to_string()),
             Instruction::Label("start_frontend_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
@@ -325,8 +329,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_main_page".to_string()),
             Instruction::Label("start_frontend_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
@@ -348,10 +354,12 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_main_page".to_string()),
             Instruction::Label("start_frontend_main".to_string()),
+            Instruction::StartContext,
             Instruction::Label("start_loop".to_string()),
             Instruction::Call("start_main_page".to_string()),
             Instruction::Jump("start_loop".to_string()),
             Instruction::Label("end_loop".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
@@ -380,8 +388,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_get_products".to_string()),
             Instruction::Label("start_products_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_products_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
@@ -402,8 +412,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_get_products".to_string()),
             Instruction::Label("start_products_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_products_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
@@ -432,8 +444,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_get_products".to_string()),
             Instruction::Label("start_products_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_products_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
@@ -454,8 +468,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_get_products".to_string()),
             Instruction::Label("start_products_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_products_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
@@ -485,8 +501,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_get_products".to_string()),
             Instruction::Label("start_products_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_products_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
@@ -502,10 +520,12 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_main_page".to_string()),
             Instruction::Label("start_frontend_main".to_string()),
+            Instruction::StartContext,
             Instruction::Label("start_loop".to_string()),
             Instruction::Call("start_main_page".to_string()),
             Instruction::Jump("start_loop".to_string()),
             Instruction::Label("end_loop".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];
@@ -535,8 +555,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_get_products".to_string()),
             Instruction::Label("start_products_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_products_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_products_main".to_string()),
             Instruction::Label("end_products".to_string()),
         ];
@@ -552,8 +574,10 @@ mod tests {
             Instruction::Ret,
             Instruction::Label("end_main_page".to_string()),
             Instruction::Label("start_frontend_main".to_string()),
+            Instruction::StartContext,
             Instruction::CheckInterrupt,
             Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::EndContext,
             Instruction::Label("end_frontend_main".to_string()),
             Instruction::Label("end_frontend".to_string()),
         ];

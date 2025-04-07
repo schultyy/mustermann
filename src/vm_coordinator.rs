@@ -17,7 +17,7 @@ pub enum ServiceMessage {
 
 struct Service {
     sender: mpsc::Sender<String>,
-    // trace_provider: trace::TracerProvider,
+    trace_provider: Option<trace::TracerProvider>,
 }
 
 pub struct ServiceCoordinator {
@@ -44,12 +44,14 @@ impl ServiceCoordinator {
                 span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
 
                 if let Some(service) = self.services.get(&to) {
-                    // let tracer = service.trace_provider.tracer(to.clone());
-                    // let mut span = tracer
-                    //     .span_builder(format!("{}/{}", to.clone(), function))
-                    //     .with_kind(SpanKind::Server)
-                    //     .start_with_context(&tracer, &context);
-                    // span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
+                    if let Some(trace_provider) = &service.trace_provider {
+                        let tracer = trace_provider.tracer(to.clone());
+                        let mut span = tracer
+                            .span_builder(format!("{}/{}", to.clone(), function))
+                            .with_kind(SpanKind::Server)
+                            .start_with_context(&tracer, &context);
+                        span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
+                    }
 
                     service
                         .sender
@@ -99,13 +101,13 @@ impl ServiceCoordinator {
         &mut self,
         name: String,
         tx: mpsc::Sender<String>,
-        // tracer: trace::TracerProvider,
+        tracer: Option<trace::TracerProvider>,
     ) {
         self.services.insert(
             name,
             Service {
                 sender: tx,
-                // trace_provider: None,
+                trace_provider: tracer,
             },
         );
     }

@@ -4,6 +4,7 @@ use clap::Parser;
 use code_gen::{instruction::Instruction, CodeGenerator};
 use futures::future::join_all;
 use printer::AnnotatedInstruction;
+use runtime_error::RuntimeError;
 use tokio::sync::mpsc;
 use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -80,7 +81,16 @@ async fn execute_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut coordinator = vm_coordinator::ServiceCoordinator::new();
     for service in ast.services {
         let service_code = CodeGenerator::new(&service).process()?;
-        let service_handles = execute_service(&service.name, service_code, &mut coordinator).await;
+        let service_handles = execute_service(
+            &service.name,
+            service_code,
+            &mut coordinator,
+            &args
+                .otel_endpoint
+                .clone()
+                .unwrap_or("http://localhost:4317".to_string()),
+        )
+        .await?;
         handles.extend(service_handles);
     }
     let coordinator_handle = tokio::spawn(async move {
@@ -96,11 +106,20 @@ async fn execute_service(
     service_name: &str,
     service_code: Vec<Instruction>,
     coordinator: &mut vm_coordinator::ServiceCoordinator,
-) -> Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>> {
+    otel_endpoint: &str,
+) -> Result<Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>>, RuntimeError> {
     let (print_tx, mut print_rx) = mpsc::channel(1);
     let (remote_call_tx, mut remote_call_rx) = mpsc::channel(1);
-    coordinator.add_service(service_name.to_string(), remote_call_tx.clone());
-    let mut vm = vm::VM::new(service_code.clone(), print_tx)
+
+    let tracer = vm::setup_tracer(&otel_endpoint, &service_name)
+        .map_err(|e| RuntimeError::InitTraceError(e))?;
+
+    coordinator.add_service(
+        service_name.to_string(),
+        remote_call_tx.clone(),
+        Some(tracer),
+    );
+    let mut vm = vm::VM::new(service_code.clone(), &service_name, print_tx)
         .with_remote_call_tx(coordinator.get_main_tx().clone())
         .with_remote_call_rx(remote_call_rx);
     let mut handles = Vec::new();
@@ -128,51 +147,5 @@ async fn execute_service(
             }
         }
     }));
-    handles
+    Ok(handles)
 }
-
-// async fn execute_services(args: &Args, config: config::Config) -> Result<(), RuntimeError> {
-//     let mut coordinator = vm_coordinator::ServiceCoordinator::new();
-//     let mut handles: Vec<JoinHandle<Result<(), VMError>>> = Vec::new();
-//     let otel_endpoint = args
-//         .otel_endpoint
-//         .clone()
-//         .unwrap_or("http://localhost:4317".to_string());
-//     for service in config.services {
-//         let (tx, rx) = mpsc::channel(1000);
-//         let tracer = vm::setup_tracer(&otel_endpoint, &service.name)
-//             .map_err(|e| RuntimeError::InitTraceError(e))?;
-
-//         coordinator.add_service(service.name.clone(), tx.clone(), tracer.clone());
-//         let coordinator_tx = coordinator.get_main_tx();
-//         let byte_code = ServiceByteCodeGenerator::new(&service).process_service()?;
-//         let mut vm = vm::VM::with_tracer(byte_code, Some(coordinator_tx), Some(rx), Some(tracer))
-//             .map_err(|e| RuntimeError::InitTraceError(e))?;
-//         handles.push(tokio::spawn(async move {
-//             return vm.run().await;
-//         }));
-//     }
-
-//     let coordinator_handle: JoinHandle<Result<(), VMError>> = tokio::spawn(async move {
-//         coordinator.run().await;
-//         Ok(())
-//     });
-//     handles.push(coordinator_handle);
-//     join_all(handles).await;
-//     Ok(())
-// }
-
-// async fn execute_logs(config: config::Config) -> Result<(), RuntimeError> {
-//     for task in config.logs {
-//         execute_config_task(&task).await?;
-//     }
-//     Ok(())
-// }
-
-// async fn execute_config_task(task: &config::Task) -> Result<(), RuntimeError> {
-//     let byte_code = LogByteCodeGenerator::new(task).process_task()?;
-//     let mut vm = vm::VM::with_tracer(byte_code, None, None, None)
-//         .map_err(|e| RuntimeError::InitTraceError(e))?;
-//     vm.run().await?;
-//     Ok(())
-// }

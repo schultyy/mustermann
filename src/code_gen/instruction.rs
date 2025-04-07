@@ -57,7 +57,7 @@ pub enum Instruction {
     /// End a OpenTelemetry context
     EndContext,
     /// No operation
-    Nop,
+    CheckInterrupt,
     /// Calls a local function, indicated by a label
     Call(String),
     /// Return from a local function
@@ -83,7 +83,7 @@ impl std::fmt::Display for Instruction {
             Instruction::RemoteCall => write!(f, "RemoteCall"),
             Instruction::StartContext => write!(f, "StartContext"),
             Instruction::EndContext => write!(f, "EndContext"),
-            Instruction::Nop => write!(f, "Nop"),
+            Instruction::CheckInterrupt => write!(f, "Nop"),
             Instruction::Call(label) => write!(f, "Call({})", label),
             Instruction::Ret => write!(f, "Ret"),
         }

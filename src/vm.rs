@@ -24,6 +24,7 @@ pub enum VMError {
     UnsupportedInstruction,
     MaxExecutionCounterReached,
     InvalidTemplate(String),
+    IPOutOfBounds(usize, usize),
 }
 
 impl std::error::Error for VMError {}
@@ -42,6 +43,13 @@ impl std::fmt::Display for VMError {
             VMError::UnsupportedInstruction => write!(f, "Unsupported instruction"),
             VMError::MaxExecutionCounterReached => write!(f, "Max execution counter reached"),
             VMError::InvalidTemplate(template) => write!(f, "Invalid template: {}", template),
+            VMError::IPOutOfBounds(ip, len) => {
+                write!(
+                    f,
+                    "Instruction Pointer out of bounds: {} | No of instructions: {}",
+                    ip, len
+                )
+            }
         }
     }
 }
@@ -144,7 +152,9 @@ impl VM {
         let mut execution_counter = 0;
         while self.ip < self.code.len() {
             self.ip += 1;
-            self.handle_remote_call().await?;
+            if self.ip >= self.code.len() {
+                return Err(VMError::IPOutOfBounds(self.ip, self.code.len()));
+            }
             let instruction = self.code[self.ip].clone();
             self.execute_instruction(instruction).await?;
             execution_counter += 1;
@@ -162,15 +172,26 @@ impl VM {
             self.remote_call_counter += 1;
             if self.remote_call_counter > self.remote_call_limit {
                 if let Ok(msg) = remote_call_rx.try_recv() {
-                    self.return_addresses.push(self.ip);
-                    self.ip = self
-                        .code
-                        .iter()
-                        .position(|i| i == &Instruction::Label(msg.clone()))
-                        .ok_or(VMError::MissingLabel(msg.clone()))?;
+                    let label_name = format!("start_{}", msg);
+                    self.handle_local_call(label_name).await?;
                 }
                 self.remote_call_counter = 0;
             }
+        }
+        Ok(())
+    }
+
+    async fn handle_local_call(&mut self, label: String) -> Result<(), VMError> {
+        self.return_addresses.push(self.ip);
+        let jump_to = self
+            .code
+            .iter()
+            .position(|i| i == &Instruction::Label(label.clone()));
+
+        if let Some(jump_to) = jump_to {
+            self.ip = jump_to;
+        } else {
+            return Err(VMError::MissingLabel(label.clone()));
         }
         Ok(())
     }
@@ -298,19 +319,11 @@ impl VM {
             Instruction::EndContext => {
                 return Err(VMError::UnsupportedInstruction);
             }
-            Instruction::Nop => {}
+            Instruction::CheckInterrupt => {
+                self.handle_remote_call().await?;
+            }
             Instruction::Call(label) => {
-                self.return_addresses.push(self.ip);
-                let jump_to = self
-                    .code
-                    .iter()
-                    .position(|i| i == &Instruction::Label(label.clone()));
-
-                if let Some(jump_to) = jump_to {
-                    self.ip = jump_to;
-                } else {
-                    return Err(VMError::MissingLabel(label.clone()));
-                }
+                self.handle_local_call(label).await?;
             }
             Instruction::Ret => {
                 self.ip = self.return_addresses.pop().unwrap();
@@ -834,7 +847,7 @@ mod tests {
             .with_remote_call_rx(remote_call_rx);
 
         remote_call_tx
-            .send("start_get_products".to_string())
+            .send("get_products".to_string())
             .await
             .unwrap();
 

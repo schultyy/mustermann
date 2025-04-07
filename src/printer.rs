@@ -86,7 +86,7 @@ impl Into<AnnotatedInstruction> for &Instruction {
                 instruction: "EndContext".to_string(),
                 description: "End the current context".to_string(),
             },
-            Instruction::Nop => AnnotatedInstruction {
+            Instruction::CheckInterrupt => AnnotatedInstruction {
                 instruction: "Nop".to_string(),
                 description: "No operation".to_string(),
             },

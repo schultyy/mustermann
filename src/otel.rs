@@ -32,7 +32,7 @@ pub fn setup_otlp(
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "INFO".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().json())
         .with(layer)
         .init();
     Ok(logger_provider)

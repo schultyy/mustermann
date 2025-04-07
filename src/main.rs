@@ -119,14 +119,15 @@ async fn execute_service(
     let tracer = vm::setup_tracer(&otel_endpoint, &service_name)
         .map_err(|e| RuntimeError::InitTraceError(e))?;
 
+    let mut vm = vm::VM::new(service_code.clone(), &service_name, print_tx)
+        .with_remote_call_tx(coordinator.get_main_tx().clone())
+        .with_remote_call_rx(remote_call_rx)
+        .with_tracer(tracer.clone());
     coordinator.add_service(
         service_name.to_string(),
         remote_call_tx.clone(),
         Some(tracer),
     );
-    let mut vm = vm::VM::new(service_code.clone(), &service_name, print_tx)
-        .with_remote_call_tx(coordinator.get_main_tx().clone())
-        .with_remote_call_rx(remote_call_rx);
     let mut handles = Vec::new();
     let app_name = service_name.to_string();
     let print_handle = tokio::spawn(async move {

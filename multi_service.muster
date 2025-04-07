@@ -15,3 +15,26 @@ service frontend {
     call main_page
   }
 }
+
+service analytics {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}
+
+
+service frontend_b {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}

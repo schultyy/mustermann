@@ -104,14 +104,15 @@ async fn execute_service(
         .with_remote_call_tx(coordinator.get_main_tx().clone())
         .with_remote_call_rx(remote_call_rx);
     let mut handles = Vec::new();
+    let app_name = service_name.to_string();
     let print_handle = tokio::spawn(async move {
         while let Some(message) = print_rx.recv().await {
             match message {
                 vm::PrintMessage::Stdout(message) => {
-                    tracing::info!("{}", message);
+                    tracing::info!(app_name = %app_name, "{}", message);
                 }
                 vm::PrintMessage::Stderr(message) => {
-                    tracing::error!("{}", message);
+                    tracing::error!(app_name = %app_name, "{}", message);
                 }
             }
         }

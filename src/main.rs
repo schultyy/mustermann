@@ -31,6 +31,12 @@ struct Args {
     /// The name of the service to be used in the logs. Defaults to "mustermann"
     #[arg(short, long, default_value = "mustermann")]
     service_name: String,
+    /// The maximum number of remote calls to be made. Defaults to 10000
+    #[arg(short, long)]
+    remote_call_limit: Option<usize>,
+    /// The maximum number of instructions to be executed. Defaults to 1000000
+    #[arg(short, long)]
+    max_instructions: Option<usize>,
 }
 
 #[tokio::main]
@@ -87,16 +93,8 @@ async fn execute_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut coordinator = vm_coordinator::ServiceCoordinator::new();
     for service in ast.services {
         let service_code = CodeGenerator::new(&service).process()?;
-        let service_handles = execute_service(
-            &service.name,
-            service_code,
-            &mut coordinator,
-            &args
-                .otel_endpoint
-                .clone()
-                .unwrap_or("http://localhost:4317".to_string()),
-        )
-        .await?;
+        let service_handles =
+            execute_service(&service.name, service_code, &mut coordinator, &args).await?;
         handles.extend(service_handles);
     }
     let coordinator_handle = tokio::spawn(async move {
@@ -112,10 +110,15 @@ async fn execute_service(
     service_name: &str,
     service_code: Vec<Instruction>,
     coordinator: &mut vm_coordinator::ServiceCoordinator,
-    otel_endpoint: &str,
+    args: &Args,
 ) -> Result<Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>>, RuntimeError> {
     let (print_tx, mut print_rx) = mpsc::channel(1);
     let (remote_call_tx, remote_call_rx) = mpsc::channel(1);
+
+    let otel_endpoint = args
+        .otel_endpoint
+        .clone()
+        .unwrap_or("http://localhost:4317".to_string());
 
     let tracer = vm::setup_tracer(&otel_endpoint, &service_name)
         .map_err(|e| RuntimeError::InitTraceError(e))?;
@@ -124,6 +127,15 @@ async fn execute_service(
         .with_remote_call_tx(coordinator.get_main_tx().clone())
         .with_remote_call_rx(remote_call_rx)
         .with_tracer(tracer.clone());
+
+    if let Some(remote_call_limit) = args.remote_call_limit {
+        vm = vm.with_custom_remote_call_limit(remote_call_limit);
+    }
+
+    if let Some(max_instructions) = args.max_instructions {
+        vm = vm.with_max_execution_counter(max_instructions);
+    }
+
     coordinator.add_service(
         service_name.to_string(),
         remote_call_tx.clone(),

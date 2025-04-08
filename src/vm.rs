@@ -636,7 +636,7 @@ mod tests {
         let service = call_other_service();
         let ast = parser::parse(&service).unwrap();
         let code = CodeGenerator::new(&ast.services[1]).process().unwrap();
-        let (print_tx, print_rx) = mpsc::channel(10);
+        let (print_tx, _print_rx) = mpsc::channel(10);
         let mut vm =
             VM::new(code.clone(), &ast.services[1].name, print_tx).with_max_execution_counter(10);
         match vm.run().await {
@@ -680,9 +680,6 @@ mod tests {
                     } => {
                         assert_eq!(to, "products".to_string());
                         assert_eq!(function, "get_products".to_string());
-                    }
-                    _ => {
-                        assert!(false, "Remote call message should be a call");
                     }
                 }
             }

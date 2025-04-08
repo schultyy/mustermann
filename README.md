@@ -105,6 +105,62 @@ service frontend {
 }
 ```
 
+## Multi-service example
+
+```
+service products {
+  method get_products {
+    print "Fetching product orders %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+}
+
+service features {
+  method is_enabled {
+    print "Check if feature is enabled %s" with ["login", "upload", "create"]
+    sleep 1000ms
+  }
+}
+
+service frontend {
+  method login {
+    print "Main page"
+    call features.is_enabled
+  }
+
+  loop {
+    call login
+  }
+}
+
+service analytics {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}
+
+
+service frontend_b {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}
+```
+
+This service definition will generate the following service map:
+
+![servicemap](servicemap.png)
+
 ## License
 
 MIT

@@ -5,14 +5,21 @@ service products {
   }
 }
 
+service features {
+  method is_enabled {
+    print "Check if feature is enabled %s" with ["login", "upload", "create"]
+    sleep 1000ms
+  }
+}
+
 service frontend {
-  method main_page {
+  method login {
     print "Main page"
-    call products.get_products
+    call features.is_enabled
   }
 
   loop {
-    call main_page
+    call login
   }
 }
 

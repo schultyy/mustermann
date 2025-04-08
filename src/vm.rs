@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::{TraceContextExt, TracerProvider};
+use opentelemetry::propagation::TextMapPropagator;
+use opentelemetry::trace::{FutureExt, TraceContextExt, TracerProvider};
 use opentelemetry::{global, KeyValue};
 use opentelemetry::{
     trace::{SpanKind, Tracer},
@@ -12,7 +13,7 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
-use tonic::metadata::{MetadataMap, MetadataValue};
+use tonic::metadata::{self, MetadataMap, MetadataValue};
 
 use crate::code_gen::instruction::{Instruction, StackValue};
 use crate::vm_coordinator::ServiceMessage;
@@ -319,15 +320,28 @@ impl VM {
                     let local_function_name = self
                         .find_current_function_name()
                         .ok_or(VMError::MissingFunctionName)?;
-                    let mut span = None;
+                    let mut cx = None;
 
                     if let Some(tracer_provider) = self.tracer.as_ref() {
                         if let Some(otel_cx) = self.otel_context.as_ref() {
                             let tracer = tracer_provider.tracer(self.service_name.clone());
-                            span = Some(tracer.start_with_context(
-                                format!("{}/{}", self.service_name, local_function_name),
-                                otel_cx,
-                            ));
+
+                            let span = tracer
+                                .span_builder(format!(
+                                    "{}/{}",
+                                    self.service_name, local_function_name
+                                ))
+                                .with_kind(SpanKind::Client)
+                                .with_attributes(vec![KeyValue::new(
+                                    SERVICE_NAME,
+                                    self.service_name.clone(),
+                                )])
+                                .start(&tracer);
+
+                            cx = Some(otel_cx.with_span(span));
+                            let mut metadata = HashMap::new();
+                            let propagator = TraceContextPropagator::new();
+                            propagator.inject_context(&cx.clone().unwrap(), &mut metadata);
                         } else {
                             return Err(VMError::MissingContext);
                         }
@@ -337,15 +351,14 @@ impl VM {
                         .send(ServiceMessage::Call {
                             to: remote_service.to_string(),
                             function: remote_method.to_string(),
-                            context: self
-                                .otel_context
-                                .clone()
-                                .unwrap_or(opentelemetry::Context::current()),
+                            context: cx.clone().unwrap_or(opentelemetry::Context::current()),
                         })
                         .await
                         .map_err(|e| VMError::RemoteCallError(e.to_string()))?;
-                    if let Some(span) = span {
-                        drop(span);
+
+                    if let Some(cx) = cx {
+                        cx.span()
+                            .set_attributes(vec![KeyValue::new("response", "OK")]);
                     }
                 } else {
                     return Err(VMError::RemoteCallError(

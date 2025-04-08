@@ -36,27 +36,27 @@ impl ServiceCoordinator {
                 context,
             } => {
                 if let Some(service) = self.services.get(&to) {
-                    let tracer = global::tracer(to.clone());
-                    let mut span = tracer
-                        .span_builder(format!("{}/{}", to.clone(), function))
-                        .with_kind(SpanKind::Server)
-                        .start_with_context(&tracer, &context);
-
-                    span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
+                    let mut span = None;
                     if let Some(trace_provider) = &service.trace_provider {
                         let tracer = trace_provider.tracer(to.clone());
-                        let mut span = tracer
-                            .span_builder(format!("{}/{}", to.clone(), function))
-                            .with_kind(SpanKind::Server)
-                            .start_with_context(&tracer, &context);
-                        span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
+                        span = Some(
+                            tracer
+                                .span_builder(format!("{}/{}", to.clone(), function))
+                                .with_kind(SpanKind::Server)
+                                .with_attributes(vec![KeyValue::new(SERVICE_NAME, to.clone())])
+                                .start_with_context(&tracer, &context),
+                        );
                     }
 
                     service.sender.send(function).await.unwrap_or_else(|_| {
                         tracing::error!("Error sending message");
-                        span.set_status(Status::error("Error sending message"));
+                        if let Some(span) = &mut span {
+                            span.set_status(Status::error("Error sending message"));
+                        }
                     });
-                    span.end();
+                    if let Some(span) = span {
+                        drop(span);
+                    }
                 } else {
                     tracing::error!("Service not found: {}", to);
                 }

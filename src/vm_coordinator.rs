@@ -35,15 +35,14 @@ impl ServiceCoordinator {
                 function,
                 context,
             } => {
-                let tracer = global::tracer(to.clone());
-                let mut span = tracer
-                    .span_builder(format!("{}/{}", to.clone(), function))
-                    .with_kind(SpanKind::Server)
-                    .start_with_context(&tracer, &context);
-
-                span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
-
                 if let Some(service) = self.services.get(&to) {
+                    let tracer = global::tracer(to.clone());
+                    let mut span = tracer
+                        .span_builder(format!("{}/{}", to.clone(), function))
+                        .with_kind(SpanKind::Server)
+                        .start_with_context(&tracer, &context);
+
+                    span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
                     if let Some(trace_provider) = &service.trace_provider {
                         let tracer = trace_provider.tracer(to.clone());
                         let mut span = tracer
@@ -53,16 +52,14 @@ impl ServiceCoordinator {
                         span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
                     }
 
-                    service
-                        .sender
-                        .send(function)
-                        .await
-                        .unwrap_or_else(|_| println!("Error sending message"));
+                    service.sender.send(function).await.unwrap_or_else(|_| {
+                        tracing::error!("Error sending message");
+                        span.set_status(Status::error("Error sending message"));
+                    });
+                    span.end();
                 } else {
                     tracing::error!("Service not found: {}", to);
-                    span.set_status(Status::error("Service not found"));
                 }
-                span.end();
             }
         }
     }

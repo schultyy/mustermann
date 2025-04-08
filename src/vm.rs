@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::trace::{FutureExt, TraceContextExt, TracerProvider};
+use opentelemetry::trace::{SpanBuilder, TracerProvider as _};
 use opentelemetry::{global, KeyValue};
 use opentelemetry::{
     trace::{SpanKind, Tracer},
@@ -33,6 +33,7 @@ pub enum VMError {
     InvalidTemplate(String),
     IPOutOfBounds(usize, usize),
     MissingFunctionName,
+    MissingContext,
 }
 
 impl std::error::Error for VMError {}
@@ -59,6 +60,7 @@ impl std::fmt::Display for VMError {
                 )
             }
             VMError::MissingFunctionName => write!(f, "Missing function name"),
+            VMError::MissingContext => write!(f, "Missing context"),
         }
     }
 }
@@ -318,30 +320,39 @@ impl VM {
             }
             Instruction::RemoteCall => {
                 if let Some(remote_call_tx) = self.remote_call_tx.as_ref() {
-                    let method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                    let service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                    let function_name = self
+                    let remote_method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                    let remote_service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                    let local_function_name = self
                         .find_current_function_name()
                         .ok_or(VMError::MissingFunctionName)?;
+                    let mut span = None;
 
                     if let Some(tracer_provider) = self.tracer.as_ref() {
                         if let Some(otel_cx) = self.otel_context.as_ref() {
                             let tracer = tracer_provider.tracer(self.service_name.clone());
-                            let _span = tracer
-                                .span_builder(format!("{}/{}", self.service_name, function_name))
-                                .with_kind(SpanKind::Server)
-                                .with_context(otel_cx.clone());
+                            span = Some(tracer.start_with_context(
+                                format!("{}/{}", self.service_name, local_function_name),
+                                otel_cx,
+                            ));
+                        } else {
+                            return Err(VMError::MissingContext);
                         }
                     }
 
                     remote_call_tx
                         .send(ServiceMessage::Call {
-                            to: service.to_string(),
-                            function: method.to_string(),
-                            context: opentelemetry::Context::current(),
+                            to: remote_service.to_string(),
+                            function: remote_method.to_string(),
+                            context: self
+                                .otel_context
+                                .clone()
+                                .unwrap_or(opentelemetry::Context::current()),
                         })
                         .await
                         .map_err(|e| VMError::RemoteCallError(e.to_string()))?;
+                    if let Some(span) = span {
+                        drop(span);
+                    }
                 } else {
                     return Err(VMError::RemoteCallError(
                         "Remote call tx not set".to_string(),

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::trace::{FutureExt, TraceContextExt, TracerProvider};
-use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
+use opentelemetry::{global, KeyValue};
 use opentelemetry::{
     trace::{SpanKind, Tracer},
     Context,
@@ -77,9 +78,9 @@ pub fn setup_tracer(
         .with_tonic()
         .with_export_config(opentelemetry_otlp::ExportConfig {
             endpoint: Some(endpoint.to_string()),
-            ..Default::default()
+            protocol: opentelemetry_otlp::Protocol::Grpc,
+            timeout: Some(std::time::Duration::from_secs(3)),
         })
-        .with_timeout(std::time::Duration::from_secs(3))
         .with_metadata(map)
         .build()?;
 
@@ -88,7 +89,7 @@ pub fn setup_tracer(
         .build();
     let provider = SdkTracerProvider::builder()
         .with_resource(resource)
-        .with_simple_exporter(otlp_exporter)
+        .with_batch_exporter(otlp_exporter)
         .build();
 
     // Then pass it into provider builder

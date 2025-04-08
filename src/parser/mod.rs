@@ -334,13 +334,13 @@ fn parse_sleep_statement(pair: Pair<Rule>) -> Result<Statement, ParseError> {
 
 // Parse a call statement
 fn parse_call_statement(pair: Pair<Rule>) -> Result<Statement, ParseError> {
-    let mut inner_pairs = pair.into_inner();
+    let inner_pairs = pair.into_inner();
 
     let mut service_name = None;
     let mut method_name = None;
 
     // Process the pairs to extract service and method names
-    let mut pairs_vec: Vec<Pair<Rule>> = inner_pairs.collect();
+    let pairs_vec: Vec<Pair<Rule>> = inner_pairs.collect();
 
     if pairs_vec.len() == 1 {
         // Only method name is present
@@ -365,36 +365,6 @@ fn parse_call_statement(pair: Pair<Rule>) -> Result<Statement, ParseError> {
         service: service_name,
         method,
     })
-}
-
-// Helper trait for rule enum
-pub trait RuleTrait {
-    fn as_str(&self) -> &'static str;
-}
-
-impl RuleTrait for Rule {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Rule::program => "program",
-            Rule::service_def => "service_def",
-            Rule::method_def => "method_def",
-            Rule::loop_def => "loop_def",
-            Rule::statement => "statement",
-            Rule::print_stmt => "print_stmt",
-            Rule::sleep_stmt => "sleep_stmt",
-            Rule::call_stmt => "call_stmt",
-            Rule::time_value => "time_value",
-            Rule::time_unit => "time_unit",
-            Rule::array_literal => "array_literal",
-            Rule::string_literal => "string_literal",
-            Rule::identifier => "identifier",
-            Rule::number => "number",
-            Rule::WHITESPACE => "WHITESPACE",
-            Rule::COMMENT => "COMMENT",
-            Rule::EOI => "EOI",
-            Rule::print_channel => "print_channel",
-        }
-    }
 }
 
 #[cfg(test)]

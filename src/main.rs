@@ -10,7 +10,6 @@ use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod code_gen;
-mod config;
 mod metadata_map;
 mod otel;
 mod parser;

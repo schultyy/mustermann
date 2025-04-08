@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use opentelemetry::trace::{FutureExt, TraceContextExt, TracerProvider};
-use opentelemetry::trace::{SpanBuilder, TracerProvider as _};
+use opentelemetry::trace::{TraceContextExt, TracerProvider};
 use opentelemetry::{global, KeyValue};
 use opentelemetry::{
     trace::{SpanKind, Tracer},
@@ -10,7 +9,6 @@ use opentelemetry::{
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
-// use opentelemetry_sdk::trace::{Builder, RandomIdGenerator, TracerProvider};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
@@ -22,13 +20,11 @@ use crate::vm_coordinator::ServiceMessage;
 pub enum VMError {
     StackUnderflow,
     InvalidStackValue,
-    MissingAppName,
     MissingVar(String),
     RemoteCallError(String),
     MissingLabel(String),
     MissingSpan,
     PrintError(mpsc::error::SendError<PrintMessage>),
-    UnsupportedInstruction,
     MaxExecutionCounterReached,
     InvalidTemplate(String),
     IPOutOfBounds(usize, usize),
@@ -43,13 +39,11 @@ impl std::fmt::Display for VMError {
         match self {
             VMError::StackUnderflow => write!(f, "Stack underflow"),
             VMError::InvalidStackValue => write!(f, "Invalid stack value"),
-            VMError::MissingAppName => write!(f, "Missing app name"),
             VMError::MissingVar(var) => write!(f, "Missing variable: {}", var),
             VMError::RemoteCallError(msg) => write!(f, "Remote call error: {}", msg),
             VMError::MissingLabel(label) => write!(f, "Missing label: {}", label),
             VMError::MissingSpan => write!(f, "Missing span"),
             VMError::PrintError(err) => write!(f, "Print error: {}", err),
-            VMError::UnsupportedInstruction => write!(f, "Unsupported instruction"),
             VMError::MaxExecutionCounterReached => write!(f, "Max execution counter reached"),
             VMError::InvalidTemplate(template) => write!(f, "Invalid template: {}", template),
             VMError::IPOutOfBounds(ip, len) => {

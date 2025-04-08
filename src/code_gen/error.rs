@@ -1,14 +1,14 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ByteCodeError {
-    UnsupportedConst(String),
+#[derive(Debug, Clone)]
+pub enum CodeGenError {
+    InvalidStatement(String),
 }
 
-impl std::error::Error for ByteCodeError {}
-
-impl std::fmt::Display for ByteCodeError {
+impl std::fmt::Display for CodeGenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ByteCodeError::UnsupportedConst(val) => write!(f, "Unsupported constant: {}", val),
+            CodeGenError::InvalidStatement(msg) => write!(f, "Invalid statement: {}", msg),
         }
     }
 }
+
+impl std::error::Error for CodeGenError {}

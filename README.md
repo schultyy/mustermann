@@ -42,72 +42,124 @@ mustermann [OPTIONS] <file_path> [otel_endpoint] [--service-name <service_name>]
 mustermann config.yaml http://localhost:4317 --service-name my-service
 ```
 
-## Configuration
+Standalone service just printing values:
 
-### Log Configuration
+```
+service payments {
+  method charge {
+    print "Processing payment for order %s" with ["12345", "67890"]
+    sleep 500ms
+  }
 
-Define log patterns and their execution behavior:
-
-```yaml
-- task_name: App Logs
-  frequency: Infinite
-  template: "User %s logged in"
-  vars:
-    - Franz Josef
-    - 34
-    - Heinz
-  severity: INFO
-- task_name: App Login Errors
-  frequency: Amount(45)
-  template: "Failed to login: %s"
-  vars:
-    - Invalid username or password
-    - Upstream connection refused
-  severity: ERROR
+  loop {
+    call charge
+  }
+}
 ```
 
-### Service Configuration
+Standalone service printing values to stderr:
 
-Define interconnected services and their interactions:
+```
+service payments {
+  method charge {
+    stderr "Processing payment for order %s" with ["12345", "67890"]
+    sleep 500ms
+  }
 
-```yaml
-logs: []
-services:
-  - name: checkout
-    methods:
-      - name: process
-        stdout: Processing Order
-        sleep_ms: 100
-  - name: user_service
-    methods:
-      - name: get_user
-        stdout: Getting user
-        sleep_ms: 100
-  - name: product_service
-    methods:
-      - name: get_product
-        stdout: Getting product
-        sleep_ms: 100
-  - name: web_frontend
-    methods:
-      - name: start_checkout
-        stdout: Starting checkout
-        calls:
-          - name: product_service
-            method: get_product
-          - name: user_service
-            method: get_user
-          - name: checkout
-            method: process
-        sleep_ms: 100
-    invoke:
-      - start_checkout
+  loop {
+    call charge
+  }
+}
 ```
 
-- Services can invoke each other's methods. 
-- If no `invoke` is specified, the service just runs in an infinite loop, waiting for invokations.
+Service accepting requests from other services:
 
-![screenshot.png](screenshot.png)
+```
+service payments {
+  method charge {
+    print "Processing payment for order %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+}
+```
+
+Call another service:
+
+```
+service products {
+  method get_products {
+    print "Fetching product orders %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+}
+
+service frontend {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}
+```
+
+## Multi-service example
+
+```
+service products {
+  method get_products {
+    print "Fetching product orders %s" with ["12345", "67890"]
+    sleep 500ms
+  }
+}
+
+service features {
+  method is_enabled {
+    print "Check if feature is enabled %s" with ["login", "upload", "create"]
+    sleep 1000ms
+  }
+}
+
+service frontend {
+  method login {
+    print "Main page"
+    call features.is_enabled
+  }
+
+  loop {
+    call login
+  }
+}
+
+service analytics {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}
+
+
+service frontend_b {
+  method main_page {
+    print "Main page"
+    call products.get_products
+  }
+
+  loop {
+    call main_page
+  }
+}
+```
+
+This service definition will generate the following service map:
+
+![servicemap](servicemap.png)
 
 ## License
 

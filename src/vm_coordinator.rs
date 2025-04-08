@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use opentelemetry::trace::{Span, SpanKind, Status, Tracer};
 use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
-use opentelemetry_sdk::trace;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
 
@@ -17,7 +17,7 @@ pub enum ServiceMessage {
 
 struct Service {
     sender: mpsc::Sender<String>,
-    trace_provider: trace::TracerProvider,
+    trace_provider: Option<SdkTracerProvider>,
 }
 
 pub struct ServiceCoordinator {
@@ -35,32 +35,31 @@ impl ServiceCoordinator {
                 function,
                 context,
             } => {
-                let tracer = global::tracer(to.clone());
-                let mut span = tracer
-                    .span_builder(format!("{}/{}", to.clone(), function))
-                    .with_kind(SpanKind::Server)
-                    .start_with_context(&tracer, &context);
-
-                span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
-
                 if let Some(service) = self.services.get(&to) {
-                    let tracer = service.trace_provider.tracer(to.clone());
-                    let mut span = tracer
-                        .span_builder(format!("{}/{}", to.clone(), function))
-                        .with_kind(SpanKind::Server)
-                        .start_with_context(&tracer, &context);
-                    span.set_attribute(KeyValue::new(SERVICE_NAME, to.clone()));
+                    let mut span = None;
+                    if let Some(trace_provider) = &service.trace_provider {
+                        let tracer = trace_provider.tracer(to.clone());
+                        span = Some(
+                            tracer
+                                .span_builder(format!("{}/{}", to.clone(), function))
+                                .with_kind(SpanKind::Server)
+                                .with_attributes(vec![KeyValue::new(SERVICE_NAME, to.clone())])
+                                .start_with_context(&tracer, &context),
+                        );
+                    }
 
-                    service
-                        .sender
-                        .send(function)
-                        .await
-                        .unwrap_or_else(|_| println!("Error sending message"));
+                    service.sender.send(function).await.unwrap_or_else(|_| {
+                        tracing::error!("Error sending message");
+                        if let Some(span) = &mut span {
+                            span.set_status(Status::error("Error sending message"));
+                        }
+                    });
+                    if let Some(span) = span {
+                        drop(span);
+                    }
                 } else {
                     tracing::error!("Service not found: {}", to);
-                    span.set_status(Status::error("Service not found"));
                 }
-                span.end();
             }
         }
     }
@@ -99,7 +98,7 @@ impl ServiceCoordinator {
         &mut self,
         name: String,
         tx: mpsc::Sender<String>,
-        tracer: trace::TracerProvider,
+        tracer: Option<SdkTracerProvider>,
     ) {
         self.services.insert(
             name,

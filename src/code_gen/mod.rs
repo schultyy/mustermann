@@ -1,437 +1,559 @@
+use instruction::{Instruction, StackValue};
+
+use crate::code_gen::error::CodeGenError;
+use crate::parser::{Method, Service, Statement};
+
 pub mod error;
 pub mod instruction;
-pub mod log_byte_code;
-pub mod service_byte_code;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrintType {
+    Stdout,
+    Stderr,
+}
+
+pub struct CodeGenerator<'a> {
+    ast: &'a Service,
+}
+
+impl<'a> CodeGenerator<'a> {
+    pub fn new(ast: &'a Service) -> Self {
+        Self { ast }
+    }
+
+    pub fn process(&self) -> Result<Vec<Instruction>, CodeGenError> {
+        self.process_service(self.ast)
+    }
+
+    fn process_service(&self, service: &'a Service) -> Result<Vec<Instruction>, CodeGenError> {
+        let mut instructions = Vec::new();
+        instructions.push(Instruction::Label(format!("start_{}", service.name)));
+        instructions.push(Instruction::Jump(format!("start_{}_main", service.name)));
+        for method in &service.methods {
+            instructions.extend(self.process_method(method)?);
+        }
+        let has_loop = service.loops.len() > 0;
+        instructions.push(Instruction::Label(format!("start_{}_main", service.name)));
+        if has_loop {
+            instructions.push(Instruction::StartContext);
+        }
+        if let Some(loop_def) = service.loops.first() {
+            self.process_loop(&mut instructions, &loop_def)?;
+        } else {
+            instructions.push(Instruction::CheckInterrupt);
+            instructions.push(Instruction::Jump(format!("start_{}_main", service.name)));
+        }
+        if has_loop {
+            instructions.push(Instruction::EndContext);
+        }
+        instructions.push(Instruction::Label(format!("end_{}_main", service.name)));
+        instructions.push(Instruction::Label(format!("end_{}", service.name)));
+        Ok(instructions)
+    }
+
+    fn process_loop(
+        &self,
+        instructions: &mut Vec<Instruction>,
+        loop_def: &crate::parser::Loop,
+    ) -> Result<(), CodeGenError> {
+        if let Some(statements) = loop_def.statements.first() {
+            instructions.push(Instruction::Label("start_loop".to_string()));
+            match statements {
+                Statement::Call { service, method } => {
+                    if let Some(_service) = service {
+                        return Err(CodeGenError::InvalidStatement(format!(
+                            "Expected Local Call - Got {}",
+                            statements.to_string()
+                        )));
+                    }
+                    instructions.push(Instruction::Call(format!("start_{}", method)));
+                }
+                _ => {
+                    return Err(CodeGenError::InvalidStatement(format!(
+                        "Expected Call - Got {}",
+                        statements.to_string()
+                    )));
+                }
+            }
+            instructions.push(Instruction::Jump(format!("start_loop")));
+            instructions.push(Instruction::Label("end_loop".to_string()));
+        }
+        Ok(())
+    }
+
+    fn process_method(&self, method: &'a Method) -> Result<Vec<Instruction>, CodeGenError> {
+        let mut instructions = Vec::new();
+        instructions.push(Instruction::Label(format!("start_{}", method.name)));
+        for statement in &method.statements {
+            match statement {
+                Statement::Stdout { message, args } => {
+                    instructions.extend(self.process_print(message, args, PrintType::Stdout));
+                }
+                Statement::Sleep { duration } => {
+                    instructions.push(Instruction::Sleep(duration.as_millis() as u64));
+                }
+                Statement::Call { service, method } => {
+                    if let Some(service) = service {
+                        instructions.push(Instruction::Push(StackValue::String(service.clone())));
+                        instructions.push(Instruction::Push(StackValue::String(method.clone())));
+                        instructions.push(Instruction::RemoteCall);
+                    } else {
+                        return Err(CodeGenError::InvalidStatement(format!(
+                            "Expected Remote Call - Got {}",
+                            statement.to_string()
+                        )));
+                    }
+                }
+                Statement::Stderr { message, args } => {
+                    instructions.extend(self.process_print(message, args, PrintType::Stderr));
+                }
+            }
+        }
+        instructions.push(Instruction::Ret);
+        instructions.push(Instruction::Label(format!("end_{}", method.name)));
+        Ok(instructions)
+    }
+
+    fn process_print(
+        &self,
+        message: &str,
+        args: &Option<Vec<String>>,
+        print_type: PrintType,
+    ) -> Vec<Instruction> {
+        let mut instructions = Vec::new();
+        if let Some(args) = args {
+            for arg in args {
+                instructions.push(Instruction::Push(StackValue::String(message.to_string())));
+                instructions.push(Instruction::Push(StackValue::String(arg.to_string())));
+                instructions.push(Instruction::Printf);
+                match print_type {
+                    PrintType::Stdout => instructions.push(Instruction::Stdout),
+                    PrintType::Stderr => instructions.push(Instruction::Stderr),
+                }
+            }
+        } else {
+            instructions.push(Instruction::Push(StackValue::String(message.to_string())));
+            match print_type {
+                PrintType::Stdout => instructions.push(Instruction::Stdout),
+                PrintType::Stderr => instructions.push(Instruction::Stderr),
+            }
+        }
+        instructions
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use crate::{
         code_gen::{
             instruction::{Instruction, StackValue},
-            log_byte_code::LogByteCodeGenerator,
-            service_byte_code::ServiceByteCodeGenerator,
+            CodeGenerator,
         },
-        config::{Call, Config, Count, Method, Service, Severity, Task},
+        parser,
     };
 
-    #[test]
-    fn test_config_parse() {
-        let config = Config {
-            logs: vec![Task {
-                name: "test".to_string(),
-                frequency: 1000,
-                count: Count::Amount(10),
-                template: "User logged in".to_string(),
-                vars: vec![],
-                severity: Severity::Info,
-            }],
-            services: vec![],
-        };
-        let generator = LogByteCodeGenerator::new(&config.logs[0]);
-        let code = generator.process_task().unwrap();
+    fn service() -> String {
+        "
+        service frontend {
+            method main_page {
+                print \"Main page\"
+            }
+        }
+        "
+        .to_string()
+    }
 
-        /*
-        StoreVar("name", "test")              // Store task name
-        StoreVar("template", "User logged in") // Store template
-        Push(10)                              // Initial counter value
-        Label("loop_start")                   // Loop start
-        Dup                                   // Duplicate counter on stack
-        JmpIfZero("loop_end")                 // Exit if counter is zero
-        Dec                                   // Decrement the counter
-        LoadVar("template")                   // Load template
-        Stdout                                // Print to stdout
-        Sleep(1000)                           // Wait 1 second
-        Jump("loop_start")                    // Jump back to loop start
-        Label("loop_end")                     // Loop end
-        Pop                                   // Clean up counter from stack
-        */
+    fn service_with_sleep() -> String {
+        "
+        service frontend {
+            method main_page {
+                print \"Main page\"
+                sleep 1000ms
+            }
+        }
+        "
+        .to_string()
+    }
 
-        assert_eq!(code.len(), 13);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(
-            code[1],
-            Instruction::StoreVar("template".to_string(), "User logged in".to_string())
-        );
-        assert_eq!(code[2], Instruction::Push(StackValue::Int(10)));
-        assert_eq!(code[3], Instruction::Label("loop_test".to_string()));
-        assert_eq!(code[4], Instruction::Dup);
-        assert_eq!(code[5], Instruction::JmpIfZero("end_test".to_string()));
-        assert_eq!(code[6], Instruction::Dec);
-        assert_eq!(code[7], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[8], Instruction::Stdout);
-        assert_eq!(code[9], Instruction::Sleep(1000));
-        assert_eq!(code[10], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[11], Instruction::Label("end_test".to_string()));
-        assert_eq!(code[12], Instruction::Pop);
+    fn service_with_main() -> String {
+        "
+        service frontend {
+            method main_page {
+                print \"Main page\"
+                sleep 1000ms
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_template() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_stderr_template() -> String {
+        "
+        service products {
+            method get_products {
+                stderr \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_template_and_empty_var_list() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with []
+                sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn service_with_stderr_template_and_empty_var_list() -> String {
+        "
+        service products {
+            method get_products {
+                stderr \"Fetching product orders %s\" with []
+                sleep 500ms
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn call_other_service() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+
+        service frontend {
+            method main_page {
+                call products.get_products
+            }
+
+            loop {
+                call main_page
+            }
+        }
+        "
+        .to_string()
+    }
+
+    fn call_other_service_without_loop() -> String {
+        "
+        service products {
+            method get_products {
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
+                sleep 500ms
+            }
+        }
+
+        service frontend {
+            method main_page {
+                call products.get_products
+            }
+        }
+        "
+        .to_string()
     }
 
     #[test]
-    fn test_counted_loop_with_vars() {
-        let config = Config {
-            logs: vec![Task {
-                name: "test".to_string(),
-                frequency: 1000,
-                count: Count::Amount(10),
-                template: "User %s logged in".to_string(),
-                vars: vec!["John".to_string()],
-                severity: Severity::Info,
-            }],
-            services: vec![],
-        };
-        let generator = LogByteCodeGenerator::new(&config.logs[0]);
-        let code = generator.process_task().unwrap();
+    fn test_log_byte_code() {
+        let service = service();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
-        /*
-        StoreVar("name", "test")              // Store task name
-        StoreVar("template", "User logged in") // Store template
-        Push(10)                              // Initial counter value
-        Label("loop_start")                   // Loop start
-        Dup                                   // Duplicate counter on stack
-        JmpIfZero("loop_end")                 // Exit if counter is zero
-        Dec                                   // Decrement the counter
-        LoadVar("template")                   // Load template
-        LoadVar("var_0")                      // Load variable
-        Printf                                // Join the strings
-        Stdout                                // Print to stdout
-        Sleep(1000)                           // Wait 1 second
-        Jump("loop_start")                    // Jump back to loop start
-        Label("loop_end")                     // Loop end
-        Pop                                   // Clean up counter from stack
-        */
-        assert_eq!(code.len(), 16);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(
-            code[1],
-            Instruction::StoreVar("template".to_string(), "User %s logged in".to_string())
-        );
-        assert_eq!(
-            code[2],
-            Instruction::StoreVar("var_0".to_string(), "John".to_string())
-        );
-        assert_eq!(code[3], Instruction::Push(StackValue::Int(10)));
-        assert_eq!(code[4], Instruction::Label("loop_test".to_string()));
-        assert_eq!(code[5], Instruction::Dup);
-        assert_eq!(code[6], Instruction::JmpIfZero("end_test".to_string()));
-        assert_eq!(code[7], Instruction::Dec);
-        assert_eq!(code[8], Instruction::LoadVar("var_0".to_string()));
-        assert_eq!(code[9], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[10], Instruction::Printf);
-        assert_eq!(code[11], Instruction::Stdout);
-        assert_eq!(code[12], Instruction::Sleep(1000));
-        assert_eq!(code[13], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[14], Instruction::Label("end_test".to_string()));
-        assert_eq!(code[15], Instruction::Pop);
+        let expected = vec![
+            Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("start_main_page".to_string()),
+            Instruction::Push(StackValue::String("Main page".to_string())),
+            Instruction::Stdout,
+            Instruction::Ret,
+            Instruction::Label("end_main_page".to_string()),
+            Instruction::Label("start_frontend_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("end_frontend_main".to_string()),
+            Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(code, expected);
     }
 
     #[test]
-    fn test_generate_infinite_loop_with_single_var() {
-        let config = Config {
-            logs: vec![Task {
-                name: "test".to_string(),
-                frequency: 1000,
-                count: Count::Const("Infinite".to_string()),
-                template: "User %s logged in".to_string(),
-                vars: vec!["John".to_string()],
-                severity: Severity::Info,
-            }],
-            services: vec![],
-        };
-        let generator = LogByteCodeGenerator::new(&config.logs[0]);
-        let code = generator.process_task().unwrap();
+    fn test_service_with_sleep() {
+        let service = service_with_sleep();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
-        /*
-        StoreVar("name", "test")              // Store task name
-        StoreVar("template", "User %s logged in") // Store template
-        StoreVar("var_0", "John")               // Store variable
-        Label("loop_start")                   // Loop start
-        LoadVar("var_0")                      // Load variable
-        LoadVar("template")                   // Load template
-        Printf                                // Join the strings
-        Stdout                                // Print to stdout
-        Sleep(1000)                           // Wait 1 second
-        Jump("loop_start")                    // Jump back to loop start
-        Label("loop_end")                     // Loop end
-        */
-
-        assert_eq!(code.len(), 11);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(
-            code[1],
-            Instruction::StoreVar("template".to_string(), "User %s logged in".to_string())
-        );
-        assert_eq!(
-            code[2],
-            Instruction::StoreVar("var_0".to_string(), "John".to_string())
-        );
-        assert_eq!(code[3], Instruction::Label("loop_test".to_string()));
-        assert_eq!(code[4], Instruction::LoadVar("var_0".to_string()));
-        assert_eq!(code[5], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[6], Instruction::Printf);
-        assert_eq!(code[7], Instruction::Stdout);
-        assert_eq!(code[8], Instruction::Sleep(1000));
-        assert_eq!(code[9], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[10], Instruction::Label("end_test".to_string()));
+        let expected = vec![
+            Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("start_main_page".to_string()),
+            Instruction::Push(StackValue::String("Main page".to_string())),
+            Instruction::Stdout,
+            Instruction::Sleep(1000),
+            Instruction::Ret,
+            Instruction::Label("end_main_page".to_string()),
+            Instruction::Label("start_frontend_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("end_frontend_main".to_string()),
+            Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(code, expected);
     }
 
     #[test]
-    fn test_generate_infinite_loop() {
-        let config = Config {
-            logs: vec![Task {
-                name: "test".to_string(),
-                frequency: 1000,
-                count: Count::Const("Infinite".to_string()),
-                template: "User logged in".to_string(),
-                vars: vec![],
-                severity: Severity::Info,
-            }],
-            services: vec![],
-        };
-        let generator = LogByteCodeGenerator::new(&config.logs[0]);
-        let code = generator.process_task().unwrap();
-
-        /*
-        StoreVar("name", "test")              // Store task name
-        StoreVar("template", "User logged in") // Store template
-        Label("loop_start")                   // Loop start
-        LoadVar("template")                   // Load template
-        Stdout                                // Print to stdout
-        Sleep(1000)                           // Wait 1 second
-        Jump("loop_start")                    // Jump back to loop start
-        Label("loop_end")                     // Loop end
-        */
-
-        assert_eq!(code.len(), 8);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(
-            code[1],
-            Instruction::StoreVar("template".to_string(), "User logged in".to_string())
-        );
-        assert_eq!(code[2], Instruction::Label("loop_test".to_string()));
-        assert_eq!(code[3], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[4], Instruction::Stdout);
-        assert_eq!(code[5], Instruction::Sleep(1000));
-        assert_eq!(code[6], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[7], Instruction::Label("end_test".to_string()));
+    fn test_service_with_main() {
+        let service = service_with_main();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
+        let expected = vec![
+            Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("start_main_page".to_string()),
+            Instruction::Push(StackValue::String("Main page".to_string())),
+            Instruction::Stdout,
+            Instruction::Sleep(1000),
+            Instruction::Ret,
+            Instruction::Label("end_main_page".to_string()),
+            Instruction::Label("start_frontend_main".to_string()),
+            Instruction::StartContext,
+            Instruction::Label("start_loop".to_string()),
+            Instruction::Call("start_main_page".to_string()),
+            Instruction::Jump("start_loop".to_string()),
+            Instruction::Label("end_loop".to_string()),
+            Instruction::EndContext,
+            Instruction::Label("end_frontend_main".to_string()),
+            Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(code, expected);
     }
 
     #[test]
-    fn test_print_stderr() {
-        let config = Config {
-            logs: vec![Task {
-                name: "test".to_string(),
-                frequency: 1000,
-                count: Count::Const("Infinite".to_string()),
-                template: "User logged in".to_string(),
-                vars: vec![],
-                severity: Severity::Error,
-            }],
-            services: vec![],
-        };
-        let generator = LogByteCodeGenerator::new(&config.logs[0]);
-        let code = generator.process_task().unwrap();
+    fn test_service_with_template() {
+        let service = service_with_template();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
-        /*
-        StoreVar("name", "test")              // Store task name
-        StoreVar("template", "User logged in") // Store template
-        Label("loop_start")                   // Loop start
-        LoadVar("name")                       // Load the name (was "test")
-        Push(" ")                             // Push separator
-        LoadVar("template")                   // Load template
-        StrJoin                               // Join the strings
-        StdErr                                // Print to stderr
-        Sleep(1000)                           // Wait 1 second
-        Jump("loop_start")                    // Jump back to loop start
-        Label("loop_end")                     // Loop end
-        */
-
-        assert_eq!(code.len(), 8);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(
-            code[1],
-            Instruction::StoreVar("template".to_string(), "User logged in".to_string())
-        );
-        assert_eq!(code[2], Instruction::Label("loop_test".to_string()));
-        assert_eq!(code[3], Instruction::LoadVar("template".to_string()));
-        assert_eq!(code[4], Instruction::Stderr);
-        assert_eq!(code[5], Instruction::Sleep(1000));
-        assert_eq!(code[6], Instruction::Jump("loop_test".to_string()));
-        assert_eq!(code[7], Instruction::Label("end_test".to_string()));
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(code, expected);
     }
 
     #[test]
-    fn test_generate_services() {
-        let config = Config {
-            logs: vec![],
-            services: vec![Service {
-                name: "test".to_string(),
-                invoke: Some(vec!["charge".to_string()]),
-                methods: vec![Method {
-                    name: "charge".to_string(),
-                    stdout: Some("Charging".to_string()),
-                    sleep_ms: Some(500),
-                    calls: Some(vec![Call {
-                        name: "checkout".to_string(),
-                        method: "process".to_string(),
-                    }]),
-                }],
-            }],
-        };
+    fn test_service_with_template_and_empty_var_list() {
+        let service = service_with_template_and_empty_var_list();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
-        let generator = ServiceByteCodeGenerator::new(&config.services[0]);
-        let code = generator.process_service().unwrap();
-        assert_eq!(code.len(), 16);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(code[1], Instruction::Jump("main".to_string()));
-        //--
-        assert_eq!(code[2], Instruction::Label("charge".to_string()));
-        assert_eq!(
-            code[3],
-            Instruction::Push(StackValue::String("Charging".to_string()))
-        );
-        assert_eq!(code[4], Instruction::Stdout);
-        assert_eq!(code[5], Instruction::Sleep(500));
-        assert_eq!(code[6], Instruction::StartContext);
-        assert_eq!(
-            code[7],
-            Instruction::Push(StackValue::String("checkout".to_string()))
-        );
-        assert_eq!(
-            code[8],
-            Instruction::Push(StackValue::String("process".to_string()))
-        );
-        assert_eq!(code[9], Instruction::RemoteCall);
-        assert_eq!(code[10], Instruction::EndContext);
-        assert_eq!(code[11], Instruction::Jump("main".to_string()));
-        assert_eq!(code[12], Instruction::Label("end_charge".to_string()));
-        //--
-        assert_eq!(code[13], Instruction::Label("main".to_string()));
-        assert_eq!(code[14], Instruction::Jump("charge".to_string()));
-        assert_eq!(code[15], Instruction::Label("end_main".to_string()));
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(code, expected);
     }
 
     #[test]
-    fn test_generate_services_with_multiple_calls() {
-        let config = Config {
-            logs: vec![],
-            services: vec![Service {
-                name: "test".to_string(),
-                invoke: Some(vec!["charge".to_string()]),
-                methods: vec![Method {
-                    name: "charge".to_string(),
-                    stdout: Some("Charging".to_string()),
-                    sleep_ms: Some(500),
-                    calls: Some(vec![
-                        Call {
-                            name: "checkout".to_string(),
-                            method: "start".to_string(),
-                        },
-                        Call {
-                            name: "checkout".to_string(),
-                            method: "process".to_string(),
-                        },
-                    ]),
-                }],
-            }],
-        };
+    fn test_service_with_stderr_template() {
+        let service = service_with_stderr_template();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
-        let generator = ServiceByteCodeGenerator::new(&config.services[0]);
-        let code = generator.process_service().unwrap();
-
-        assert_eq!(code.len(), 19);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(code[1], Instruction::Jump("main".to_string()));
-        //--
-        assert_eq!(code[2], Instruction::Label("charge".to_string()));
-        assert_eq!(
-            code[3],
-            Instruction::Push(StackValue::String("Charging".to_string()))
-        );
-        assert_eq!(code[4], Instruction::Stdout);
-        assert_eq!(code[5], Instruction::Sleep(500));
-        assert_eq!(code[6], Instruction::StartContext);
-        assert_eq!(
-            code[7],
-            Instruction::Push(StackValue::String("checkout".to_string()))
-        );
-        assert_eq!(
-            code[8],
-            Instruction::Push(StackValue::String("start".to_string()))
-        );
-        assert_eq!(code[9], Instruction::RemoteCall);
-        assert_eq!(
-            code[10],
-            Instruction::Push(StackValue::String("checkout".to_string()))
-        );
-        assert_eq!(
-            code[11],
-            Instruction::Push(StackValue::String("process".to_string()))
-        );
-        assert_eq!(code[12], Instruction::RemoteCall);
-        assert_eq!(code[13], Instruction::EndContext);
-        assert_eq!(code[14], Instruction::Jump("main".to_string()));
-        assert_eq!(code[15], Instruction::Label("end_charge".to_string()));
-        //--
-        assert_eq!(code[16], Instruction::Label("main".to_string()));
-        assert_eq!(code[17], Instruction::Jump("charge".to_string()));
-        assert_eq!(code[18], Instruction::Label("end_main".to_string()));
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stderr,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stderr,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(code, expected);
     }
+
     #[test]
-    fn test_generate_services_without_invoke() {
-        let config = Config {
-            logs: vec![],
-            services: vec![Service {
-                name: "test".to_string(),
-                invoke: None,
-                methods: vec![Method {
-                    name: "charge".to_string(),
-                    stdout: Some("Charging".to_string()),
-                    sleep_ms: Some(500),
-                    calls: None,
-                }],
-            }],
-        };
+    fn test_service_with_stderr_template_and_empty_var_list() {
+        let service = service_with_stderr_template_and_empty_var_list();
+        let ast = parser::parse(&service).unwrap();
+        let code = CodeGenerator::new(&ast.services[0]).process().unwrap();
 
-        let generator = ServiceByteCodeGenerator::new(&config.services[0]);
-        let code = generator.process_service().unwrap();
+        let expected = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(code, expected);
+    }
 
-        assert_eq!(code.len(), 11);
-        assert_eq!(
-            code[0],
-            Instruction::StoreVar("name".to_string(), "test".to_string())
-        );
-        assert_eq!(code[1], Instruction::Jump("main".to_string()));
-        assert_eq!(code[2], Instruction::Label("charge".to_string()));
-        assert_eq!(
-            code[3],
-            Instruction::Push(StackValue::String("Charging".to_string()))
-        );
-        assert_eq!(code[4], Instruction::Stdout);
-        assert_eq!(code[5], Instruction::Sleep(500));
-        assert_eq!(code[6], Instruction::Jump("main".to_string()));
-        assert_eq!(code[7], Instruction::Label("end_charge".to_string()));
-        assert_eq!(code[8], Instruction::Label("main".to_string()));
-        assert_eq!(code[9], Instruction::Jump("main".to_string()));
-        assert_eq!(code[10], Instruction::Label("end_main".to_string()));
+    #[test]
+    fn test_call_other_service() {
+        let service = call_other_service();
+        let ast = parser::parse(&service).unwrap();
+        let products_code = CodeGenerator::new(&ast.services[0]).process().unwrap();
+        let frontend_code = CodeGenerator::new(&ast.services[1]).process().unwrap();
+
+        let expected_products = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(products_code, expected_products);
+
+        let expected_frontend = vec![
+            Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("start_main_page".to_string()),
+            Instruction::Push(StackValue::String("products".to_string())),
+            Instruction::Push(StackValue::String("get_products".to_string())),
+            Instruction::RemoteCall,
+            Instruction::Ret,
+            Instruction::Label("end_main_page".to_string()),
+            Instruction::Label("start_frontend_main".to_string()),
+            Instruction::StartContext,
+            Instruction::Label("start_loop".to_string()),
+            Instruction::Call("start_main_page".to_string()),
+            Instruction::Jump("start_loop".to_string()),
+            Instruction::Label("end_loop".to_string()),
+            Instruction::EndContext,
+            Instruction::Label("end_frontend_main".to_string()),
+            Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(frontend_code, expected_frontend);
+    }
+
+    #[test]
+    fn test_call_other_service_without_loop() {
+        let service = call_other_service_without_loop();
+        let ast = parser::parse(&service).unwrap();
+        let products_code = CodeGenerator::new(&ast.services[0]).process().unwrap();
+        let frontend_code = CodeGenerator::new(&ast.services[1]).process().unwrap();
+
+        let expected_products = vec![
+            Instruction::Label("start_products".to_string()),
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("start_get_products".to_string()),
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("12345".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Push(StackValue::String("Fetching product orders %s".to_string())),
+            Instruction::Push(StackValue::String("67890".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+            Instruction::Sleep(500),
+            Instruction::Ret,
+            Instruction::Label("end_get_products".to_string()),
+            Instruction::Label("start_products_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_products_main".to_string()),
+            Instruction::Label("end_products_main".to_string()),
+            Instruction::Label("end_products".to_string()),
+        ];
+        assert_eq!(products_code, expected_products);
+
+        let expected_frontend = vec![
+            Instruction::Label("start_frontend".to_string()),
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("start_main_page".to_string()),
+            Instruction::Push(StackValue::String("products".to_string())),
+            Instruction::Push(StackValue::String("get_products".to_string())),
+            Instruction::RemoteCall,
+            Instruction::Ret,
+            Instruction::Label("end_main_page".to_string()),
+            Instruction::Label("start_frontend_main".to_string()),
+            Instruction::CheckInterrupt,
+            Instruction::Jump("start_frontend_main".to_string()),
+            Instruction::Label("end_frontend_main".to_string()),
+            Instruction::Label("end_frontend".to_string()),
+        ];
+        assert_eq!(frontend_code, expected_frontend);
     }
 }

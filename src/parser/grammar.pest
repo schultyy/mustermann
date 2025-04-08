@@ -1,0 +1,36 @@
+program = { SOI ~ service_def* ~ EOI }
+
+service_def = { "service" ~ identifier ~ "{" ~ (method_def | loop_def)* ~ "}" }
+
+method_def = { "method" ~ identifier ~ "{" ~ statement* ~ "}" }
+
+loop_def = { "loop" ~ "{" ~ statement* ~ "}" }
+
+statement = { 
+    print_stmt | 
+    sleep_stmt | 
+    call_stmt 
+}
+
+print_stmt = { print_channel ~ string_literal ~ ("with" ~ array_literal)? }
+
+print_channel = { "print" | "stderr" }
+
+sleep_stmt = { "sleep" ~ time_value }
+
+call_stmt = { "call" ~ (identifier ~ ".")? ~ identifier }
+
+time_value = { number ~ time_unit }
+
+time_unit = { "ms" | "s" }
+
+array_literal = { "[" ~ (string_literal ~ ("," ~ string_literal)*)? ~ "]" }
+
+string_literal = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+identifier = { ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+number = { ASCII_DIGIT+ }
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }

@@ -40,7 +40,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let mut logger_provider = None;
 
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+fn print_code(args: &Args) -> anyhow::Result<()> {
     let file_path = args.file_path.clone();
     let file_content = fs::read_to_string(&file_path)?;
     let ast = parser::parse(&file_content)?;
@@ -85,7 +85,7 @@ fn print_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn execute_code(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+async fn execute_code(args: &Args) -> anyhow::Result<()> {
     let file_path = args.file_path.clone();
     let file_content = fs::read_to_string(&file_path)?;
     let ast = parser::parse(&file_content)?;

@@ -47,12 +47,12 @@ Standalone service just printing values:
 ```
 service payments {
   method charge {
-    print "Processing payment for order %s" with ["12345", "67890"]
-    sleep 500ms
+    print "Processing payment for order %s" with ["12345", "67890"];
+    sleep 500ms;
   }
 
   loop {
-    call charge
+    call charge;
   }
 }
 ```
@@ -62,12 +62,12 @@ Standalone service printing values to stderr:
 ```
 service payments {
   method charge {
-    stderr "Processing payment for order %s" with ["12345", "67890"]
-    sleep 500ms
+    stderr "Processing payment for order %s" with ["12345", "67890"];
+    sleep 500ms;
   }
 
   loop {
-    call charge
+    call charge;
   }
 }
 ```
@@ -77,8 +77,8 @@ Service accepting requests from other services:
 ```
 service payments {
   method charge {
-    print "Processing payment for order %s" with ["12345", "67890"]
-    sleep 500ms
+    print "Processing payment for order %s" with ["12345", "67890"];
+    sleep 500ms;
   }
 }
 ```
@@ -88,19 +88,19 @@ Call another service:
 ```
 service products {
   method get_products {
-    print "Fetching product orders %s" with ["12345", "67890"]
-    sleep 500ms
+    print "Fetching product orders %s" with ["12345", "67890"];
+    sleep 500ms;
   }
 }
 
 service frontend {
   method main_page {
-    print "Main page"
-    call products.get_products
+    print "Main page";
+    call products.get_products;
   }
 
   loop {
-    call main_page
+    call main_page;
   }
 }
 ```
@@ -110,49 +110,49 @@ service frontend {
 ```
 service products {
   method get_products {
-    print "Fetching product orders %s" with ["12345", "67890"]
-    sleep 500ms
+    print "Fetching product orders %s" with ["12345", "67890"];
+    sleep 500ms;
   }
 }
 
 service features {
   method is_enabled {
-    print "Check if feature is enabled %s" with ["login", "upload", "create"]
-    sleep 1000ms
+    print "Check if feature is enabled %s" with ["login", "upload", "create"];
+    sleep 1000ms;
   }
 }
 
 service frontend {
   method login {
-    print "Main page"
-    call features.is_enabled
+    print "Main page";
+    call features.is_enabled;
   }
 
   loop {
-    call login
+    call login;
   }
 }
 
 service analytics {
   method main_page {
-    print "Main page"
-    call products.get_products
+    print "Main page";
+    call products.get_products;
   }
 
   loop {
-    call main_page
+    call main_page;
   }
 }
 
 
 service frontend_b {
   method main_page {
-    print "Main page"
-    call products.get_products
+    print "Main page";
+    call products.get_products;
   }
 
   loop {
-    call main_page
+    call main_page;
   }
 }
 ```

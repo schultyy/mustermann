@@ -10,7 +10,7 @@ use tracing_subscriber::prelude::*;
 pub fn setup_otlp(
     endpoint: &str,
     service_name: &str,
-) -> Result<SdkLoggerProvider, Box<dyn std::error::Error>> {
+) -> Result<SdkLoggerProvider, opentelemetry_otlp::ExporterBuildError> {
     let mut metadata = MetadataMap::new();
     metadata.insert(SERVICE_NAME, service_name.parse().unwrap());
     let exporter = LogExporter::builder()

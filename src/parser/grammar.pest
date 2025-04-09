@@ -2,15 +2,11 @@ program = { SOI ~ service_def* ~ EOI }
 
 service_def = { "service" ~ identifier ~ "{" ~ (method_def | loop_def)* ~ "}" }
 
-method_def = { "method" ~ identifier ~ "{" ~ statement* ~ "}" }
+method_def = { "method" ~ identifier ~ "{" ~ (statement)* ~ "}" }
 
 loop_def = { "loop" ~ "{" ~ statement* ~ "}" }
 
-statement = { 
-    print_stmt | 
-    sleep_stmt | 
-    call_stmt 
-}
+statement = {  (print_stmt   | sleep_stmt   | call_stmt) ~ ";" }
 
 print_stmt = { print_channel ~ string_literal ~ ("with" ~ array_literal)? }
 
@@ -33,4 +29,4 @@ identifier = { ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 number = { ASCII_DIGIT+ }
 
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
-COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }

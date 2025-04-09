@@ -156,7 +156,7 @@ mod tests {
         "
         service frontend {
             method main_page {
-                print \"Main page\"
+                print \"Main page\";
             }
         }
         "
@@ -167,8 +167,8 @@ mod tests {
         "
         service frontend {
             method main_page {
-                print \"Main page\"
-                sleep 1000ms
+                print \"Main page\";
+                sleep 1000ms;
             }
         }
         "
@@ -179,12 +179,12 @@ mod tests {
         "
         service frontend {
             method main_page {
-                print \"Main page\"
-                sleep 1000ms
+                print \"Main page\";
+                sleep 1000ms;
             }
 
             loop {
-                call main_page
+                call main_page;
             }
         }
         "
@@ -195,8 +195,8 @@ mod tests {
         "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
-                sleep 500ms
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"];
+                sleep 500ms;
             }
         }
         "
@@ -207,8 +207,8 @@ mod tests {
         "
         service products {
             method get_products {
-                stderr \"Fetching product orders %s\" with [\"12345\", \"67890\"]
-                sleep 500ms
+                stderr \"Fetching product orders %s\" with [\"12345\", \"67890\"];
+                sleep 500ms;
             }
         }
         "
@@ -219,8 +219,8 @@ mod tests {
         "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with []
-                sleep 500ms
+                print \"Fetching product orders %s\" with [];
+                sleep 500ms;
             }
         }
         "
@@ -231,8 +231,8 @@ mod tests {
         "
         service products {
             method get_products {
-                stderr \"Fetching product orders %s\" with []
-                sleep 500ms
+                stderr \"Fetching product orders %s\" with [];
+                sleep 500ms;
             }
         }
         "
@@ -243,18 +243,18 @@ mod tests {
         "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
-                sleep 500ms
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"];
+                sleep 500ms;
             }
         }
 
         service frontend {
             method main_page {
-                call products.get_products
+                call products.get_products;
             }
 
             loop {
-                call main_page
+                call main_page;
             }
         }
         "
@@ -265,14 +265,14 @@ mod tests {
         "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
-                sleep 500ms
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"];
+                sleep 500ms;
             }
         }
 
         service frontend {
             method main_page {
-                call products.get_products
+                call products.get_products;
             }
         }
         "

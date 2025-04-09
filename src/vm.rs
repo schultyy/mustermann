@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use opentelemetry::propagation::TextMapPropagator;
-use opentelemetry::trace::{FutureExt, TraceContextExt, TracerProvider};
+use opentelemetry::trace::{TraceContextExt, TracerProvider};
 use opentelemetry::{global, KeyValue};
 use opentelemetry::{
     trace::{SpanKind, Tracer},
@@ -13,7 +13,7 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
-use tonic::metadata::{self, MetadataMap, MetadataValue};
+use tonic::metadata::{MetadataMap, MetadataValue};
 
 use crate::code_gen::instruction::{Instruction, StackValue};
 use crate::vm_coordinator::ServiceMessage;

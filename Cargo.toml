@@ -3,7 +3,7 @@ name = "mustermann"
 description = "Mustermann is test data for your OpenTelemetry pipeline"
 license = "MIT"
 authors = ["Jan Schulte <janschulte@fastmail.com>"]
-version = "9.0.0"
+version = "10.0.0"
 edition = "2021"
 
 [dependencies]

@@ -427,7 +427,7 @@ mod tests {
         "
         service frontend {
             method main_page {
-                print \"Main page\"
+                print \"Main page\";
             }
         }
         "
@@ -438,12 +438,12 @@ mod tests {
         "
         service frontend {
             method main_page {
-                print \"Main page\"
-                sleep 1ms
+                print \"Main page\";
+                sleep 1ms;
             }
 
             loop {
-                call main_page
+                call main_page;
             }
         }
         "
@@ -454,11 +454,11 @@ mod tests {
         "
         service frontend {
             method main_page {
-                print \"Main page %s\" with [\"12345\", \"67890\"]
+                print \"Main page %s\" with [\"12345\", \"67890\"];
             }
 
             loop {
-                call main_page
+                call main_page;
             }
         }
         "
@@ -469,11 +469,11 @@ mod tests {
         "
         service frontend {
             method main_page {
-                stderr \"Main page %s\" with [\"12345\", \"67890\"]
+                stderr \"Main page %s\" with [\"12345\", \"67890\"];
             }
 
             loop {
-                call main_page
+                call main_page;
             }
         }
         "
@@ -484,11 +484,11 @@ mod tests {
         "
         service frontend {
             method main_page {
-                print \"Main page\" with [\"12345\", \"67890\"]
+                print \"Main page\" with [\"12345\", \"67890\"];
             }
 
             loop {
-                call main_page
+                call main_page;
             }
         }
         "
@@ -499,18 +499,18 @@ mod tests {
         "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with [\"12345\", \"67890\"]
-                sleep 500ms
+                print \"Fetching product orders %s\" with [\"12345\", \"67890\"];
+                sleep 500ms;
             }
         }
 
         service frontend {
             method main_page {
-                call products.get_products
+                call products.get_products;
             }
 
             loop {
-                call main_page
+                call main_page;
             }
         }
         "

@@ -376,7 +376,7 @@ mod tests {
         let service = "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with []
+                print \"Fetching product orders %s\" with [];
             }
         }
         ";
@@ -393,7 +393,7 @@ mod tests {
         let service = "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with []
+                print \"Fetching product orders %s\" with [];
             }
         }
         ";
@@ -418,8 +418,8 @@ mod tests {
         let service = "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with []
-                sleep 1s
+                print \"Fetching product orders %s\" with [];
+                sleep 1s;
             }
         }
         ";
@@ -450,8 +450,8 @@ mod tests {
         let service = "
         service products {
             method get_products {
-                print \"Fetching product orders %s\" with []
-                stderr \"Error fetching product orders\"
+                print \"Fetching product orders %s\" with [];
+                stderr \"Error fetching product orders\";
             }
         }
         ";
@@ -474,6 +474,39 @@ mod tests {
             Statement::Stderr {
                 message: "Error fetching product orders".to_string(),
                 args: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_method_with_several_calls() {
+        let service = "
+        service products {
+            method get_products {
+                call products.get_products;
+                call features.is_enabled;
+            }
+        }
+        ";
+        let ast = parse(service).unwrap();
+
+        assert_eq!(ast.services.len(), 1);
+        assert_eq!(ast.services[0].name, "products");
+        assert_eq!(ast.services[0].methods.len(), 1);
+        assert_eq!(ast.services[0].methods[0].name, "get_products");
+        assert_eq!(ast.services[0].methods[0].statements.len(), 2);
+        assert_eq!(
+            ast.services[0].methods[0].statements[0],
+            Statement::Call {
+                service: Some("products".to_string()),
+                method: "get_products".to_string(),
+            }
+        );
+        assert_eq!(
+            ast.services[0].methods[0].statements[1],
+            Statement::Call {
+                service: Some("features".to_string()),
+                method: "is_enabled".to_string(),
             }
         );
     }

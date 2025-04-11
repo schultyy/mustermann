@@ -64,6 +64,125 @@ pub enum Instruction {
     Ret,
 }
 
+impl Instruction {
+    pub fn code(&self) -> u8 {
+        match self {
+            Instruction::Push(StackValue::String(_)) => 0x01,
+            Instruction::Push(StackValue::Int(_)) => 0x02,
+            Instruction::Pop => 0x03,
+            Instruction::Dec => 0x04,
+            Instruction::JmpIfZero(_) => 0x05,
+            Instruction::Label(_) => 0x06,
+            Instruction::Stdout => 0x07,
+            Instruction::Stderr => 0x08,
+            Instruction::Sleep(_) => 0x09,
+            Instruction::StoreVar(_, _) => 0x0a,
+            Instruction::LoadVar(_) => 0x0b,
+            Instruction::Dup => 0x0c,
+            Instruction::Jump(_) => 0x0d,
+            Instruction::Printf => 0x0e,
+            Instruction::RemoteCall => 0x0f,
+            Instruction::StartContext => 0x10,
+            Instruction::EndContext => 0x11,
+            Instruction::CheckInterrupt => 0x12,
+            Instruction::Call(_) => 0x13,
+            Instruction::Ret => 0x14,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        match self {
+            Instruction::Push(stack_value) => match stack_value {
+                StackValue::String(s) => {
+                    bytes.push(self.code());
+                    let str_len = s.len();
+                    bytes.extend_from_slice(&str_len.to_le_bytes());
+                    bytes.extend_from_slice(s.as_bytes());
+                }
+                StackValue::Int(n) => {
+                    bytes.push(self.code());
+                    let n_bytes = n.to_le_bytes();
+                    bytes.extend_from_slice(&n_bytes.len().to_le_bytes());
+                    bytes.extend_from_slice(&n_bytes);
+                }
+            },
+            Instruction::Pop => {
+                bytes.push(self.code());
+            }
+            Instruction::Dec => {
+                bytes.push(self.code());
+            }
+            Instruction::JmpIfZero(label) => {
+                bytes.push(self.code());
+                bytes.extend_from_slice(&label.len().to_le_bytes());
+                bytes.extend_from_slice(label.as_bytes());
+            }
+            Instruction::Label(label) => {
+                bytes.push(self.code());
+                bytes.extend_from_slice(&label.len().to_le_bytes());
+                bytes.extend_from_slice(label.as_bytes());
+            }
+            Instruction::Stdout => {
+                bytes.push(self.code());
+            }
+            Instruction::Stderr => {
+                bytes.push(self.code());
+            }
+            Instruction::Sleep(ms) => {
+                bytes.push(self.code());
+                let ms_bytes = ms.to_le_bytes();
+                bytes.extend_from_slice(&ms_bytes.len().to_le_bytes());
+                bytes.extend_from_slice(&ms_bytes);
+            }
+            Instruction::StoreVar(key, value) => {
+                bytes.push(self.code());
+                bytes.extend_from_slice(&key.len().to_le_bytes());
+                bytes.extend_from_slice(key.as_bytes());
+                bytes.extend_from_slice(&value.len().to_le_bytes());
+                bytes.extend_from_slice(value.as_bytes());
+            }
+            Instruction::LoadVar(key) => {
+                bytes.push(self.code());
+                bytes.push(key.len() as u8);
+                bytes.extend_from_slice(key.as_bytes());
+            }
+            Instruction::Dup => {
+                bytes.push(self.code());
+            }
+            Instruction::Jump(label) => {
+                bytes.push(self.code());
+                bytes.extend_from_slice(&label.len().to_le_bytes());
+                bytes.extend_from_slice(label.as_bytes());
+            }
+            Instruction::Printf => {
+                bytes.push(self.code());
+            }
+            Instruction::RemoteCall => {
+                bytes.push(self.code());
+            }
+            Instruction::StartContext => {
+                bytes.push(self.code());
+            }
+            Instruction::EndContext => {
+                bytes.push(self.code());
+            }
+            Instruction::CheckInterrupt => {
+                bytes.push(self.code());
+            }
+            Instruction::Call(label) => {
+                bytes.push(self.code());
+                bytes.extend_from_slice(&label.len().to_le_bytes());
+                bytes.extend_from_slice(label.as_bytes());
+            }
+            Instruction::Ret => {
+                bytes.push(self.code());
+            }
+        }
+        bytes
+    }
+}
+
 impl std::fmt::Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -87,5 +206,265 @@ impl std::fmt::Display for Instruction {
             Instruction::Call(label) => write!(f, "Call({})", label),
             Instruction::Ret => write!(f, "Ret"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_push_string_bytes() {
+        let string_value = "Hello, world!".to_string();
+        let string_len = string_value.len();
+        let string_len_bytes = string_len.to_le_bytes();
+        let instruction = Instruction::Push(StackValue::String(string_value.clone()));
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes[1..string_len_bytes.len() + 1], string_len_bytes);
+        assert_eq!(
+            &bytes[string_len_bytes.len() + 1..],
+            string_value.as_bytes()
+        );
+        assert_eq!(bytes.len(), 1 + string_len_bytes.len() + string_value.len());
+    }
+
+    #[test]
+    fn test_push_int_bytes() {
+        let int_value: u64 = 4096;
+        let int_value_bytes = int_value.to_le_bytes();
+        let instruction = Instruction::Push(StackValue::Int(int_value));
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(
+            bytes[1..int_value_bytes.len() + 1],
+            int_value_bytes.len().to_le_bytes()
+        );
+        assert_eq!(&bytes[int_value_bytes.len() + 1..], &int_value_bytes);
+        assert_eq!(
+            bytes.len(),
+            1 + int_value_bytes.len().to_le_bytes().len() + int_value_bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_jmp_if_zero_bytes() {
+        let label = "label".to_string();
+        let label_bytes = label.as_bytes();
+        let instruction = Instruction::JmpIfZero(label.clone());
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(
+            bytes[1..label_bytes.len().to_le_bytes().len() + 1],
+            label_bytes.len().to_le_bytes()
+        );
+        assert_eq!(
+            &bytes[label_bytes.len().to_le_bytes().len() + 1..],
+            label_bytes
+        );
+        assert_eq!(
+            bytes.len(),
+            1 + label_bytes.len().to_le_bytes().len() + label_bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_label_bytes() {
+        let label = "label".to_string();
+        let label_bytes = label.as_bytes();
+        let instruction = Instruction::Label(label.clone());
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(
+            bytes[1..label_bytes.len().to_le_bytes().len() + 1],
+            label_bytes.len().to_le_bytes()
+        );
+        assert_eq!(
+            &bytes[label_bytes.len().to_le_bytes().len() + 1..],
+            label_bytes
+        );
+        assert_eq!(
+            bytes.len(),
+            1 + label_bytes.len().to_le_bytes().len() + label_bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_stdout_bytes() {
+        let instruction = Instruction::Stdout;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_stderr_bytes() {
+        let instruction = Instruction::Stderr;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_sleep_bytes() {
+        let ms = 1000;
+        let instruction = Instruction::Sleep(ms);
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(
+            bytes[1..ms.to_le_bytes().len().to_le_bytes().len() + 1],
+            ms.to_le_bytes().len().to_le_bytes()
+        );
+        assert_eq!(
+            &bytes[ms.to_le_bytes().len().to_le_bytes().len() + 1..],
+            &ms.to_le_bytes()
+        );
+        assert_eq!(
+            bytes.len(),
+            1 + ms.to_le_bytes().len().to_le_bytes().len() + ms.to_le_bytes().len()
+        );
+    }
+
+    #[test]
+    fn test_store_var_bytes() {
+        let key = "key".to_string();
+        let value = "value".to_string();
+
+        let key_bytes = key.as_bytes();
+        let value_bytes = value.as_bytes();
+
+        let key_len = key_bytes.len();
+        let value_len = value_bytes.len();
+
+        let instruction = Instruction::StoreVar(key.clone(), value.clone());
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(
+            bytes[1..key_len.to_le_bytes().len() + 1],
+            key_len.to_le_bytes()
+        );
+        assert_eq!(
+            &bytes[1 + key_len.to_le_bytes().len()
+                ..1 + key_len.to_le_bytes().len() + key_bytes.len()],
+            key_bytes
+        );
+
+        assert_eq!(
+            bytes[1 + key_len.to_le_bytes().len() + key_bytes.len()
+                ..1 + key_len.to_le_bytes().len()
+                    + key_bytes.len()
+                    + value_len.to_le_bytes().len()],
+            value_len.to_le_bytes()
+        );
+        assert_eq!(
+            &bytes[1
+                + key_len.to_le_bytes().len()
+                + key_bytes.len()
+                + value_len.to_le_bytes().len()..],
+            value_bytes
+        );
+    }
+
+    #[test]
+    fn test_load_var_bytes() {
+        let key = "key".to_string();
+        let key_bytes = key.as_bytes();
+        let key_len = key_bytes.len();
+        let instruction = Instruction::LoadVar(key.clone());
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes[1], key_len as u8);
+        assert_eq!(&bytes[2..2 + key_bytes.len()], key_bytes);
+        assert_eq!(bytes.len(), 2 + key_bytes.len());
+    }
+
+    #[test]
+    fn test_dup_bytes() {
+        let instruction = Instruction::Dup;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_jump_bytes() {
+        let label = "label".to_string();
+        let label_bytes = label.as_bytes();
+        let instruction = Instruction::Jump(label.clone());
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(
+            bytes[1..label_bytes.len().to_le_bytes().len() + 1],
+            label_bytes.len().to_le_bytes()
+        );
+        assert_eq!(
+            &bytes[1 + label_bytes.len().to_le_bytes().len()..],
+            label_bytes
+        );
+        assert_eq!(
+            bytes.len(),
+            1 + label_bytes.len().to_le_bytes().len() + label_bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_printf_bytes() {
+        let instruction = Instruction::Printf;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_remote_call_bytes() {
+        let instruction = Instruction::RemoteCall;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_start_context_bytes() {
+        let instruction = Instruction::StartContext;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_end_context_bytes() {
+        let instruction = Instruction::EndContext;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_check_interrupt_bytes() {
+        let instruction = Instruction::CheckInterrupt;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
+    }
+
+    #[test]
+    fn test_call_bytes() {
+        let label = "label".to_string();
+        let label_bytes = label.as_bytes();
+        let instruction = Instruction::Call(label.clone());
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(
+            bytes[1..label_bytes.len().to_le_bytes().len() + 1],
+            label_bytes.len().to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn test_ret_bytes() {
+        let instruction = Instruction::Ret;
+        let bytes = instruction.to_bytes();
+        assert_eq!(bytes[0], instruction.code());
+        assert_eq!(bytes.len(), 1);
     }
 }

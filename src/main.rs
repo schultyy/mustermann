@@ -37,6 +37,13 @@ struct Args {
     /// The maximum number of instructions to be executed. Defaults to 1000000
     #[arg(short, long)]
     max_instructions: Option<usize>,
+
+    /// The size of the print queue. Defaults to 1
+    #[arg(long, default_value = "1")]
+    print_queue_size: u32,
+    /// The size of the remote call queue. Defaults to 1
+    #[arg(long, default_value = "1")]
+    remote_call_queue_size: u32,
 }
 
 #[tokio::main]
@@ -112,8 +119,8 @@ async fn execute_service(
     coordinator: &mut vm_coordinator::ServiceCoordinator,
     args: &Args,
 ) -> Result<Vec<tokio::task::JoinHandle<Result<(), vm::VMError>>>, RuntimeError> {
-    let (print_tx, mut print_rx) = mpsc::channel(1);
-    let (remote_call_tx, remote_call_rx) = mpsc::channel(1);
+    let (print_tx, mut print_rx) = mpsc::channel(args.print_queue_size as usize);
+    let (remote_call_tx, remote_call_rx) = mpsc::channel(args.remote_call_queue_size as usize);
 
     let otel_endpoint = args
         .otel_endpoint

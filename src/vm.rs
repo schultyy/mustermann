@@ -37,6 +37,7 @@ pub enum VMError {
     MissingFunctionName,
     MissingContext,
     InvalidInstruction(u8),
+    MissingStackFrame,
 }
 
 impl std::error::Error for VMError {}
@@ -65,6 +66,7 @@ impl std::fmt::Display for VMError {
             VMError::InvalidInstruction(instruction) => {
                 write!(f, "Invalid instruction: {}", instruction)
             }
+            VMError::MissingStackFrame => write!(f, "Missing stack frame"),
         }
     }
 }
@@ -114,7 +116,7 @@ const LENGTH_OFFSET: usize = std::mem::size_of::<usize>();
 
 pub struct VM {
     code: Vec<u8>,
-    stack: Vec<StackValue>,
+    stack: Vec<Vec<StackValue>>,
     vars: HashMap<String, StackValue>,
     label_jump_map: HashMap<String, usize>,
     label_index_map: HashMap<usize, String>,
@@ -164,7 +166,7 @@ impl VM {
             code,
             label_jump_map,
             label_index_map,
-            stack: Vec::new(),
+            stack: vec![Vec::new()],
             vars: HashMap::new(),
             ip: 0,
             print_tx,
@@ -238,6 +240,7 @@ impl VM {
 
     async fn handle_local_call(&mut self, label: String) -> Result<(), VMError> {
         self.return_addresses.push(self.ip);
+        self.stack.push(Vec::new());
         self.ip = *self
             .label_jump_map
             .get(&label)
@@ -254,6 +257,10 @@ impl VM {
         (start, end, length)
     }
 
+    fn current_stackframe(&mut self) -> Result<&mut Vec<StackValue>, VMError> {
+        self.stack.last_mut().ok_or(VMError::MissingStackFrame)
+    }
+
     async fn execute_instruction(&mut self) -> Result<(), VMError> {
         let instruction = self.code[self.ip];
         match instruction {
@@ -261,14 +268,14 @@ impl VM {
                 let (_start, end, str_len) = self.extract_length();
                 let str = &self.code[end..end + str_len];
                 let str = String::from_utf8(str.to_vec()).unwrap();
-                self.stack.push(StackValue::String(str));
+                self.current_stackframe()?.push(StackValue::String(str));
                 self.ip = end + str_len;
             }
             PUSH_INT_CODE => {
                 let (_start, end, int_len) = self.extract_length();
                 let int = &self.code[end..end + int_len];
                 let int = u64::from_le_bytes(int.try_into().unwrap());
-                self.stack.push(StackValue::Int(int));
+                self.current_stackframe()?.push(StackValue::Int(int));
                 self.ip = end + int_len;
             }
             POP_CODE => {
@@ -276,9 +283,12 @@ impl VM {
                 self.ip += 1;
             }
             DEC_CODE => {
-                let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let top = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?;
                 match top {
-                    StackValue::Int(n) => self.stack.push(StackValue::Int(n - 1)),
+                    StackValue::Int(n) => self.current_stackframe()?.push(StackValue::Int(n - 1)),
                     _ => return Err(VMError::InvalidStackValue),
                 }
                 self.ip += 1;
@@ -287,7 +297,10 @@ impl VM {
                 let (_start, end, jump_to_label_len) = self.extract_length();
                 let jump_to_label_bytes = &self.code[end..end + jump_to_label_len];
                 let jump_to_label = String::from_utf8(jump_to_label_bytes.to_vec()).unwrap();
-                let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let top = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?;
                 match top {
                     StackValue::Int(n) => {
                         if n == 0 {
@@ -307,7 +320,10 @@ impl VM {
                 self.ip = end + label_len;
             }
             STDOUT_CODE => {
-                let str = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let str = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?;
                 match str {
                     StackValue::String(s) => self
                         .print_tx
@@ -323,7 +339,10 @@ impl VM {
                 self.ip += 1;
             }
             STDERR_CODE => {
-                let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let top = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?;
                 match top {
                     StackValue::String(s) => {
                         self.print_tx
@@ -364,13 +383,18 @@ impl VM {
                 let value = self
                     .vars
                     .get(&key)
-                    .ok_or(VMError::MissingVar(key.clone()))?;
-                self.stack.push(value.clone());
+                    .ok_or(VMError::MissingVar(key.clone()))?
+                    .clone();
+                self.current_stackframe()?.push(value);
                 self.ip = end + key_len;
             }
             DUP_CODE => {
-                let top = self.stack.last().ok_or(VMError::StackUnderflow)?;
-                self.stack.push(top.clone());
+                let top = self
+                    .current_stackframe()?
+                    .last()
+                    .ok_or(VMError::StackUnderflow)?
+                    .clone();
+                self.current_stackframe()?.push(top);
                 self.ip += 1;
             }
             JUMP_CODE => {
@@ -384,8 +408,14 @@ impl VM {
                     .to_owned();
             }
             PRINTF_CODE => {
-                let var = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let var = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?;
+                let template = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?;
                 let template = match template {
                     StackValue::String(s) => s,
                     _ => return Err(VMError::InvalidStackValue),
@@ -397,70 +427,79 @@ impl VM {
                         _ => return Err(VMError::InvalidStackValue),
                     };
                     let formatted = template.replace("%s", &var);
-                    self.stack.push(StackValue::String(formatted));
+                    self.current_stackframe()?
+                        .push(StackValue::String(formatted));
                 } else if template.contains("%d") {
                     let var = match var {
                         StackValue::Int(i) => i,
                         _ => return Err(VMError::InvalidStackValue),
                     };
                     let formatted = template.replace("%d", &var.to_string());
-                    self.stack.push(StackValue::String(formatted));
+                    self.current_stackframe()?
+                        .push(StackValue::String(formatted));
                 } else {
                     return Err(VMError::InvalidTemplate(template.clone()));
                 }
                 self.ip += 1;
             }
             REMOTE_CALL_CODE => {
-                if let Some(remote_call_tx) = self.remote_call_tx.as_ref() {
-                    let remote_method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                    let remote_service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                    let local_function_name = self
-                        .find_current_function_name()
-                        .ok_or(VMError::MissingFunctionName)?;
-                    let mut cx = None;
-
-                    if let Some(tracer_provider) = self.tracer.as_ref() {
-                        if let Some(otel_cx) = self.otel_context.as_ref() {
-                            let tracer = tracer_provider.tracer(self.service_name.clone());
-
-                            let span = tracer
-                                .span_builder(format!(
-                                    "{}/{}",
-                                    self.service_name, local_function_name
-                                ))
-                                .with_kind(SpanKind::Client)
-                                .with_attributes(vec![KeyValue::new(
-                                    SERVICE_NAME,
-                                    self.service_name.clone(),
-                                )])
-                                .start(&tracer);
-
-                            cx = Some(otel_cx.with_span(span));
-                            let mut metadata = HashMap::new();
-                            let propagator = TraceContextPropagator::new();
-                            propagator.inject_context(&cx.clone().unwrap(), &mut metadata);
-                        } else {
-                            return Err(VMError::MissingContext);
-                        }
-                    }
-
-                    remote_call_tx
-                        .send(ServiceMessage::Call {
-                            to: remote_service.to_string(),
-                            function: remote_method.to_string(),
-                            context: cx.clone().unwrap_or(opentelemetry::Context::current()),
-                        })
-                        .await
-                        .map_err(|e| VMError::RemoteCallError(e.to_string()))?;
-
-                    if let Some(cx) = cx {
-                        cx.span()
-                            .set_attributes(vec![KeyValue::new("response", "OK")]);
-                    }
-                } else {
-                    return Err(VMError::RemoteCallError(
+                let remote_call_tx = self
+                    .remote_call_tx
+                    .as_ref()
+                    .ok_or(VMError::RemoteCallError(
                         "Remote call tx not set".to_string(),
-                    ));
+                    ))?
+                    .clone();
+
+                let remote_method = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?
+                    .clone();
+                let remote_service = self
+                    .current_stackframe()?
+                    .pop()
+                    .ok_or(VMError::StackUnderflow)?
+                    .clone();
+                let local_function_name = self
+                    .find_current_function_name()
+                    .ok_or(VMError::MissingFunctionName)?;
+                let mut cx = None;
+
+                if let Some(tracer_provider) = self.tracer.as_ref() {
+                    if let Some(otel_cx) = self.otel_context.as_ref() {
+                        let tracer = tracer_provider.tracer(self.service_name.clone());
+
+                        let span = tracer
+                            .span_builder(format!("{}/{}", self.service_name, local_function_name))
+                            .with_kind(SpanKind::Client)
+                            .with_attributes(vec![KeyValue::new(
+                                SERVICE_NAME,
+                                self.service_name.clone(),
+                            )])
+                            .start(&tracer);
+
+                        cx = Some(otel_cx.with_span(span));
+                        let mut metadata = HashMap::new();
+                        let propagator = TraceContextPropagator::new();
+                        propagator.inject_context(&cx.clone().unwrap(), &mut metadata);
+                    } else {
+                        return Err(VMError::MissingContext);
+                    }
+                }
+
+                remote_call_tx
+                    .send(ServiceMessage::Call {
+                        to: remote_service.to_string(),
+                        function: remote_method.to_string(),
+                        context: cx.clone().unwrap_or(opentelemetry::Context::current()),
+                    })
+                    .await
+                    .map_err(|e| VMError::RemoteCallError(e.to_string()))?;
+
+                if let Some(cx) = cx {
+                    cx.span()
+                        .set_attributes(vec![KeyValue::new("response", "OK")]);
                 }
                 self.ip += 1;
             }
@@ -502,6 +541,7 @@ impl VM {
             }
             RET_CODE => {
                 self.ip = self.return_addresses.pop().unwrap();
+                self.stack.pop();
             }
             _ => {
                 return Err(VMError::InvalidInstruction(instruction));
@@ -735,7 +775,7 @@ mod tests {
             Instruction::Stdout,
             Instruction::Stdout,
         ];
-        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let (print_tx, print_rx) = mpsc::channel(10);
         let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(5);
         match vm.run().await {
             Ok(_) => {
@@ -827,7 +867,7 @@ mod tests {
             Instruction::Printf,
             Instruction::Stdout,
         ];
-        let (print_tx, print_rx) = mpsc::channel(10);
+        let (print_tx, _print_rx) = mpsc::channel(10);
         let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(4);
         match vm.run().await {
             Ok(_) => {
@@ -1051,6 +1091,34 @@ mod tests {
                     print_messages,
                     PrintMessage::Stdout("Fetching product orders 12345".to_string())
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_creates_new_stackframe_on_call() {
+        let code = vec![
+            Instruction::Jump("main".to_string()),
+            Instruction::Label("start_function".to_string()),
+            Instruction::Stdout,
+            Instruction::Ret,
+            Instruction::Label("end_function".to_string()),
+            Instruction::Label("main".to_string()),
+            Instruction::Push(StackValue::String("world".to_string())),
+            Instruction::Call("start_function".to_string()),
+            Instruction::Stdout,
+        ];
+
+        let (print_tx, print_rx) = mpsc::channel(5);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(15);
+
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have failed because of missing stackframe");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::StackUnderflow);
+                assert_eq!(print_rx.len(), 0);
             }
         }
     }

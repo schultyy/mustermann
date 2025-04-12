@@ -284,12 +284,7 @@ impl VM {
                 self.ip += 1;
             }
             JMP_IF_ZERO_CODE => {
-                let start = self.ip + 1;
-                let end = start + LENGTH_OFFSET;
-                let jump_to_label_len_bytes: [u8; LENGTH_OFFSET] =
-                    self.code[start..end].try_into().unwrap();
-                let jump_to_label_len =
-                    usize::from_le_bytes(jump_to_label_len_bytes.try_into().unwrap());
+                let (_start, end, jump_to_label_len) = self.extract_length();
                 let jump_to_label_bytes = &self.code[end..end + jump_to_label_len];
                 let jump_to_label = String::from_utf8(jump_to_label_bytes.to_vec()).unwrap();
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
@@ -349,18 +344,14 @@ impl VM {
                 self.ip = end + sleep_len;
             }
             STORE_VAR_CODE => {
-                let start = self.ip + 1;
-                let end = start + LENGTH_OFFSET;
-                let key_len_bytes: [u8; LENGTH_OFFSET] = self.code[start..end].try_into().unwrap();
-                let key_len = usize::from_le_bytes(key_len_bytes.try_into().unwrap());
+                let (_start, end, key_len) = self.extract_length();
                 let key = &self.code[end..end + key_len];
                 let key = String::from_utf8(key.to_vec()).unwrap();
 
-                let start = end + key_len;
-                let end = start + LENGTH_OFFSET;
-                let value_len_bytes: [u8; LENGTH_OFFSET] =
-                    self.code[start..end].try_into().unwrap();
-                let value_len = usize::from_le_bytes(value_len_bytes.try_into().unwrap());
+                //We need to substract one here because extract_length adds +1 to compensate for the instruction byte
+                self.ip = end + key_len - 1;
+
+                let (_start, end, value_len) = self.extract_length();
                 let value = &self.code[end..end + value_len];
                 let value = String::from_utf8(value.to_vec()).unwrap();
 
@@ -368,10 +359,7 @@ impl VM {
                 self.ip = end + value_len;
             }
             LOAD_VAR_CODE => {
-                let start = self.ip + 1;
-                let end = start + LENGTH_OFFSET;
-                let key_len_bytes: [u8; LENGTH_OFFSET] = self.code[start..end].try_into().unwrap();
-                let key_len = usize::from_le_bytes(key_len_bytes.try_into().unwrap());
+                let (_start, end, key_len) = self.extract_length();
                 let key = &self.code[end..end + key_len];
                 let key = String::from_utf8(key.to_vec()).unwrap();
                 let value = self
@@ -387,12 +375,7 @@ impl VM {
                 self.ip += 1;
             }
             JUMP_CODE => {
-                let start = self.ip + 1;
-                let end = start + LENGTH_OFFSET;
-                let jump_to_label_len_bytes: [u8; LENGTH_OFFSET] =
-                    self.code[start..end].try_into().unwrap();
-                let jump_to_label_len =
-                    usize::from_le_bytes(jump_to_label_len_bytes.try_into().unwrap());
+                let (_start, end, jump_to_label_len) = self.extract_length();
                 let jump_to_label_bytes = &self.code[end..end + jump_to_label_len];
                 let jump_to_label = String::from_utf8(jump_to_label_bytes.to_vec()).unwrap();
                 self.ip = self

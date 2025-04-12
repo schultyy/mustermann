@@ -319,7 +319,6 @@ impl VM {
                         .send(PrintMessage::Stdout(i.to_string()))
                         .await
                         .map_err(VMError::PrintError)?,
-                    _ => return Err(VMError::InvalidStackValue),
                 }
                 self.ip += 1;
             }

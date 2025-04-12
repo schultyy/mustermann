@@ -64,29 +64,50 @@ pub enum Instruction {
     Ret,
 }
 
+pub const PUSH_STRING_CODE: u8 = 0x01;
+pub const PUSH_INT_CODE: u8 = 0x02;
+pub const POP_CODE: u8 = 0x03;
+pub const DEC_CODE: u8 = 0x04;
+pub const JMP_IF_ZERO_CODE: u8 = 0x05;
+pub const LABEL_CODE: u8 = 0x06;
+pub const STDOUT_CODE: u8 = 0x07;
+pub const STDERR_CODE: u8 = 0x08;
+pub const SLEEP_CODE: u8 = 0x09;
+pub const STORE_VAR_CODE: u8 = 0x0a;
+pub const LOAD_VAR_CODE: u8 = 0x0b;
+pub const DUP_CODE: u8 = 0x0c;
+pub const JUMP_CODE: u8 = 0x0d;
+pub const PRINTF_CODE: u8 = 0x0e;
+pub const REMOTE_CALL_CODE: u8 = 0x0f;
+pub const START_CONTEXT_CODE: u8 = 0x10;
+pub const END_CONTEXT_CODE: u8 = 0x11;
+pub const CHECK_INTERRUPT_CODE: u8 = 0x12;
+pub const CALL_CODE: u8 = 0x13;
+pub const RET_CODE: u8 = 0x14;
+
 impl Instruction {
     pub fn code(&self) -> u8 {
         match self {
-            Instruction::Push(StackValue::String(_)) => 0x01,
-            Instruction::Push(StackValue::Int(_)) => 0x02,
-            Instruction::Pop => 0x03,
-            Instruction::Dec => 0x04,
-            Instruction::JmpIfZero(_) => 0x05,
-            Instruction::Label(_) => 0x06,
-            Instruction::Stdout => 0x07,
-            Instruction::Stderr => 0x08,
-            Instruction::Sleep(_) => 0x09,
-            Instruction::StoreVar(_, _) => 0x0a,
-            Instruction::LoadVar(_) => 0x0b,
-            Instruction::Dup => 0x0c,
-            Instruction::Jump(_) => 0x0d,
-            Instruction::Printf => 0x0e,
-            Instruction::RemoteCall => 0x0f,
-            Instruction::StartContext => 0x10,
-            Instruction::EndContext => 0x11,
-            Instruction::CheckInterrupt => 0x12,
-            Instruction::Call(_) => 0x13,
-            Instruction::Ret => 0x14,
+            Instruction::Push(StackValue::String(_)) => PUSH_STRING_CODE,
+            Instruction::Push(StackValue::Int(_)) => PUSH_INT_CODE,
+            Instruction::Pop => POP_CODE,
+            Instruction::Dec => DEC_CODE,
+            Instruction::JmpIfZero(_) => JMP_IF_ZERO_CODE,
+            Instruction::Label(_) => LABEL_CODE,
+            Instruction::Stdout => STDOUT_CODE,
+            Instruction::Stderr => STDERR_CODE,
+            Instruction::Sleep(_) => SLEEP_CODE,
+            Instruction::StoreVar(_, _) => STORE_VAR_CODE,
+            Instruction::LoadVar(_) => LOAD_VAR_CODE,
+            Instruction::Dup => DUP_CODE,
+            Instruction::Jump(_) => JUMP_CODE,
+            Instruction::Printf => PRINTF_CODE,
+            Instruction::RemoteCall => REMOTE_CALL_CODE,
+            Instruction::StartContext => START_CONTEXT_CODE,
+            Instruction::EndContext => END_CONTEXT_CODE,
+            Instruction::CheckInterrupt => CHECK_INTERRUPT_CODE,
+            Instruction::Call(_) => CALL_CODE,
+            Instruction::Ret => RET_CODE,
         }
     }
 
@@ -144,7 +165,7 @@ impl Instruction {
             }
             Instruction::LoadVar(key) => {
                 bytes.push(self.code());
-                bytes.push(key.len() as u8);
+                bytes.extend_from_slice(&key.len().to_le_bytes());
                 bytes.extend_from_slice(key.as_bytes());
             }
             Instruction::Dup => {
@@ -202,7 +223,7 @@ impl std::fmt::Display for Instruction {
             Instruction::RemoteCall => write!(f, "RemoteCall"),
             Instruction::StartContext => write!(f, "StartContext"),
             Instruction::EndContext => write!(f, "EndContext"),
-            Instruction::CheckInterrupt => write!(f, "Nop"),
+            Instruction::CheckInterrupt => write!(f, "CheckInterrupt"),
             Instruction::Call(label) => write!(f, "Call({})", label),
             Instruction::Ret => write!(f, "Ret"),
         }
@@ -373,9 +394,15 @@ mod tests {
         let instruction = Instruction::LoadVar(key.clone());
         let bytes = instruction.to_bytes();
         assert_eq!(bytes[0], instruction.code());
-        assert_eq!(bytes[1], key_len as u8);
-        assert_eq!(&bytes[2..2 + key_bytes.len()], key_bytes);
-        assert_eq!(bytes.len(), 2 + key_bytes.len());
+        assert_eq!(
+            bytes[1..key_len.to_le_bytes().len() + 1],
+            key_len.to_le_bytes()
+        );
+        assert_eq!(&bytes[1 + key_len.to_le_bytes().len()..], key_bytes);
+        assert_eq!(
+            bytes.len(),
+            1 + key_len.to_le_bytes().len() + key_bytes.len()
+        );
     }
 
     #[test]

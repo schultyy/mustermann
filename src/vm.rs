@@ -15,7 +15,12 @@ use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tokio::sync::mpsc;
 use tonic::metadata::{MetadataMap, MetadataValue};
 
-use crate::code_gen::instruction::{Instruction, StackValue};
+use crate::code_gen::instruction::{
+    Instruction, StackValue, CALL_CODE, CHECK_INTERRUPT_CODE, DEC_CODE, DUP_CODE, END_CONTEXT_CODE,
+    JMP_IF_ZERO_CODE, JUMP_CODE, LABEL_CODE, LOAD_VAR_CODE, POP_CODE, PRINTF_CODE, PUSH_INT_CODE,
+    PUSH_STRING_CODE, REMOTE_CALL_CODE, RET_CODE, SLEEP_CODE, START_CONTEXT_CODE, STDERR_CODE,
+    STDOUT_CODE, STORE_VAR_CODE,
+};
 use crate::vm_coordinator::ServiceMessage;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VMError {
@@ -31,6 +36,7 @@ pub enum VMError {
     IPOutOfBounds(usize, usize),
     MissingFunctionName,
     MissingContext,
+    InvalidInstruction(u8),
 }
 
 impl std::error::Error for VMError {}
@@ -56,6 +62,9 @@ impl std::fmt::Display for VMError {
             }
             VMError::MissingFunctionName => write!(f, "Missing function name"),
             VMError::MissingContext => write!(f, "Missing context"),
+            VMError::InvalidInstruction(instruction) => {
+                write!(f, "Invalid instruction: {}", instruction)
+            }
         }
     }
 }
@@ -100,10 +109,15 @@ pub enum PrintMessage {
     Stderr(String),
 }
 
+///The length of the length byte array for a string
+const LENGTH_OFFSET: usize = std::mem::size_of::<usize>();
+
 pub struct VM {
-    code: Vec<Instruction>,
+    code: Vec<u8>,
     stack: Vec<StackValue>,
     vars: HashMap<String, StackValue>,
+    label_jump_map: HashMap<String, usize>,
+    label_index_map: HashMap<usize, String>,
     ip: usize,
     print_tx: mpsc::Sender<PrintMessage>,
     max_execution_counter: Option<usize>,
@@ -117,14 +131,39 @@ pub struct VM {
     otel_context: Option<opentelemetry::Context>,
 }
 
+///Generate the bytecode for a given set of instructions
+/// Returns the bytecode and a map of label to jump position
+/// This is used to optimize the code by precomputing the jump positions
+fn generate_bytecode(
+    instructions: Vec<Instruction>,
+) -> (Vec<u8>, HashMap<String, usize>, HashMap<usize, String>) {
+    let mut bytes = vec![];
+    let mut label_jump_map = HashMap::new();
+    let mut label_index_map = HashMap::new();
+    for instruction in instructions {
+        let instruction_bytes = instruction.to_bytes();
+        bytes.extend(instruction_bytes);
+
+        if let Instruction::Label(label) = instruction {
+            //Store the position of the label + the length of the instruction + the length of the label
+            label_jump_map.insert(label.clone(), bytes.len());
+            label_index_map.insert(bytes.len(), label);
+        }
+    }
+    (bytes, label_jump_map, label_index_map)
+}
+
 impl VM {
     pub fn new(
         code: Vec<Instruction>,
         service_name: &str,
         print_tx: mpsc::Sender<PrintMessage>,
     ) -> Self {
+        let (code, label_jump_map, label_index_map) = generate_bytecode(code);
         Self {
             code,
+            label_jump_map,
+            label_index_map,
             stack: Vec::new(),
             vars: HashMap::new(),
             ip: 0,
@@ -169,12 +208,10 @@ impl VM {
     pub async fn run(&mut self) -> Result<(), VMError> {
         let mut execution_counter = 0;
         while self.ip < self.code.len() {
-            self.ip += 1;
             if self.ip >= self.code.len() {
                 return Err(VMError::IPOutOfBounds(self.ip, self.code.len()));
             }
-            let instruction = self.code[self.ip].clone();
-            self.execute_instruction(instruction).await?;
+            self.execute_instruction().await?;
             execution_counter += 1;
             if let Some(max_execution_counter) = self.max_execution_counter {
                 if execution_counter > max_execution_counter {
@@ -201,63 +238,97 @@ impl VM {
 
     async fn handle_local_call(&mut self, label: String) -> Result<(), VMError> {
         self.return_addresses.push(self.ip);
-        let jump_to = self
-            .code
-            .iter()
-            .position(|i| i == &Instruction::Label(label.clone()));
-
-        if let Some(jump_to) = jump_to {
-            self.ip = jump_to;
-        } else {
-            return Err(VMError::MissingLabel(label.clone()));
-        }
+        self.ip = *self
+            .label_jump_map
+            .get(&label)
+            .ok_or(VMError::MissingLabel(label.clone()))?;
         Ok(())
     }
 
-    async fn execute_instruction(&mut self, instruction: Instruction) -> Result<(), VMError> {
-        tracing::debug!("Executing instruction: {:?}", instruction);
+    #[inline]
+    fn extract_length(&self) -> (usize, usize, usize) {
+        let start = self.ip + 1;
+        let end = start + LENGTH_OFFSET;
+        let length_bytes: [u8; LENGTH_OFFSET] = self.code[start..end].try_into().unwrap();
+        let length = usize::from_le_bytes(length_bytes.try_into().unwrap());
+        (start, end, length)
+    }
+
+    async fn execute_instruction(&mut self) -> Result<(), VMError> {
+        let instruction = self.code[self.ip];
         match instruction {
-            Instruction::Push(stack_value) => {
-                self.stack.push(stack_value);
+            PUSH_STRING_CODE => {
+                let (_start, end, str_len) = self.extract_length();
+                let str = &self.code[end..end + str_len];
+                let str = String::from_utf8(str.to_vec()).unwrap();
+                self.stack.push(StackValue::String(str));
+                self.ip = end + str_len;
             }
-            Instruction::Pop => {
+            PUSH_INT_CODE => {
+                let (_start, end, int_len) = self.extract_length();
+                let int = &self.code[end..end + int_len];
+                let int = u64::from_le_bytes(int.try_into().unwrap());
+                self.stack.push(StackValue::Int(int));
+                self.ip = end + int_len;
+            }
+            POP_CODE => {
                 self.stack.pop();
+                self.ip += 1;
             }
-            Instruction::Dec => {
+            DEC_CODE => {
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 match top {
                     StackValue::Int(n) => self.stack.push(StackValue::Int(n - 1)),
                     _ => return Err(VMError::InvalidStackValue),
                 }
+                self.ip += 1;
             }
-            Instruction::JmpIfZero(label) => {
+            JMP_IF_ZERO_CODE => {
+                let start = self.ip + 1;
+                let end = start + LENGTH_OFFSET;
+                let jump_to_label_len_bytes: [u8; LENGTH_OFFSET] =
+                    self.code[start..end].try_into().unwrap();
+                let jump_to_label_len =
+                    usize::from_le_bytes(jump_to_label_len_bytes.try_into().unwrap());
+                let jump_to_label_bytes = &self.code[end..end + jump_to_label_len];
+                let jump_to_label = String::from_utf8(jump_to_label_bytes.to_vec()).unwrap();
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 match top {
-                    StackValue::Int(0) => {
-                        self.ip = self
-                            .code
-                            .iter()
-                            .position(|i| i == &Instruction::Label(label.clone()))
-                            .unwrap();
-                    }
-                    _ => {}
-                }
-            }
-            Instruction::Label(_) => { /* Labels are used for jumps and are not executed */ }
-            Instruction::Stdout => {
-                let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                tracing::debug!("Sending stdout: {:?}", top);
-                match top {
-                    StackValue::String(s) => {
-                        self.print_tx
-                            .send(PrintMessage::Stdout(s))
-                            .await
-                            .map_err(VMError::PrintError)?;
+                    StackValue::Int(n) => {
+                        if n == 0 {
+                            self.ip = self
+                                .label_jump_map
+                                .get(&jump_to_label)
+                                .ok_or(VMError::MissingLabel(jump_to_label.clone()))?
+                                .to_owned();
+                        }
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
+                self.ip += 1;
             }
-            Instruction::Stderr => {
+            LABEL_CODE => {
+                let (_start, end, label_len) = self.extract_length();
+                self.ip = end + label_len;
+            }
+            STDOUT_CODE => {
+                let str = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                match str {
+                    StackValue::String(s) => self
+                        .print_tx
+                        .send(PrintMessage::Stdout(s))
+                        .await
+                        .map_err(VMError::PrintError)?,
+                    StackValue::Int(i) => self
+                        .print_tx
+                        .send(PrintMessage::Stdout(i.to_string()))
+                        .await
+                        .map_err(VMError::PrintError)?,
+                    _ => return Err(VMError::InvalidStackValue),
+                }
+                self.ip += 1;
+            }
+            STDERR_CODE => {
                 let top = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 match top {
                     StackValue::String(s) => {
@@ -268,38 +339,70 @@ impl VM {
                     }
                     _ => return Err(VMError::InvalidStackValue),
                 }
+                self.ip += 1;
             }
-            Instruction::Sleep(ms) => {
-                std::thread::sleep(std::time::Duration::from_millis(ms));
+            SLEEP_CODE => {
+                let (_start, end, sleep_len) = self.extract_length();
+                let sleep_bytes = &self.code[end..end + sleep_len];
+                let sleep_ms = u64::from_le_bytes(sleep_bytes.try_into().unwrap());
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                self.ip = end + sleep_len;
             }
-            Instruction::StoreVar(key, value) => {
-                self.vars
-                    .insert(key.clone(), StackValue::String(value.clone()));
+            STORE_VAR_CODE => {
+                let start = self.ip + 1;
+                let end = start + LENGTH_OFFSET;
+                let key_len_bytes: [u8; LENGTH_OFFSET] = self.code[start..end].try_into().unwrap();
+                let key_len = usize::from_le_bytes(key_len_bytes.try_into().unwrap());
+                let key = &self.code[end..end + key_len];
+                let key = String::from_utf8(key.to_vec()).unwrap();
+
+                let start = end + key_len;
+                let end = start + LENGTH_OFFSET;
+                let value_len_bytes: [u8; LENGTH_OFFSET] =
+                    self.code[start..end].try_into().unwrap();
+                let value_len = usize::from_le_bytes(value_len_bytes.try_into().unwrap());
+                let value = &self.code[end..end + value_len];
+                let value = String::from_utf8(value.to_vec()).unwrap();
+
+                self.vars.insert(key, StackValue::String(value));
+                self.ip = end + value_len;
             }
-            Instruction::LoadVar(key) => {
+            LOAD_VAR_CODE => {
+                let start = self.ip + 1;
+                let end = start + LENGTH_OFFSET;
+                let key_len_bytes: [u8; LENGTH_OFFSET] = self.code[start..end].try_into().unwrap();
+                let key_len = usize::from_le_bytes(key_len_bytes.try_into().unwrap());
+                let key = &self.code[end..end + key_len];
+                let key = String::from_utf8(key.to_vec()).unwrap();
                 let value = self
                     .vars
                     .get(&key)
                     .ok_or(VMError::MissingVar(key.clone()))?;
                 self.stack.push(value.clone());
+                self.ip = end + key_len;
             }
-            Instruction::Dup => {
+            DUP_CODE => {
                 let top = self.stack.last().ok_or(VMError::StackUnderflow)?;
                 self.stack.push(top.clone());
+                self.ip += 1;
             }
-            Instruction::Jump(label) => {
+            JUMP_CODE => {
+                let start = self.ip + 1;
+                let end = start + LENGTH_OFFSET;
+                let jump_to_label_len_bytes: [u8; LENGTH_OFFSET] =
+                    self.code[start..end].try_into().unwrap();
+                let jump_to_label_len =
+                    usize::from_le_bytes(jump_to_label_len_bytes.try_into().unwrap());
+                let jump_to_label_bytes = &self.code[end..end + jump_to_label_len];
+                let jump_to_label = String::from_utf8(jump_to_label_bytes.to_vec()).unwrap();
                 self.ip = self
-                    .code
-                    .iter()
-                    .position(|i| i == &Instruction::Label(label.clone()))
-                    .unwrap();
+                    .label_jump_map
+                    .get(&jump_to_label)
+                    .ok_or(VMError::MissingLabel(jump_to_label.clone()))?
+                    .to_owned();
             }
-            Instruction::Printf => {
+            PRINTF_CODE => {
                 let var = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                let var = match var {
-                    StackValue::String(s) => s,
-                    _ => return Err(VMError::InvalidStackValue),
-                };
                 let template = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 let template = match template {
                     StackValue::String(s) => s,
@@ -307,13 +410,25 @@ impl VM {
                 };
 
                 if template.contains("%s") {
+                    let var = match var {
+                        StackValue::String(s) => s,
+                        _ => return Err(VMError::InvalidStackValue),
+                    };
                     let formatted = template.replace("%s", &var);
+                    self.stack.push(StackValue::String(formatted));
+                } else if template.contains("%d") {
+                    let var = match var {
+                        StackValue::Int(i) => i,
+                        _ => return Err(VMError::InvalidStackValue),
+                    };
+                    let formatted = template.replace("%d", &var.to_string());
                     self.stack.push(StackValue::String(formatted));
                 } else {
                     return Err(VMError::InvalidTemplate(template.clone()));
                 }
+                self.ip += 1;
             }
-            Instruction::RemoteCall => {
+            REMOTE_CALL_CODE => {
                 if let Some(remote_call_tx) = self.remote_call_tx.as_ref() {
                     let remote_method = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                     let remote_service = self.stack.pop().ok_or(VMError::StackUnderflow)?;
@@ -365,8 +480,9 @@ impl VM {
                         "Remote call tx not set".to_string(),
                     ));
                 }
+                self.ip += 1;
             }
-            Instruction::StartContext => {
+            START_CONTEXT_CODE => {
                 if let Some(tracer_provider) = self.tracer.as_ref() {
                     let mut metadata = HashMap::new();
                     let tracer = tracer_provider.tracer(self.service_name.clone());
@@ -380,40 +496,46 @@ impl VM {
                     });
                     self.otel_context = Some(cx);
                 }
+                self.ip += 1;
             }
-            Instruction::EndContext => match self.otel_context.as_mut() {
-                Some(_) => {
-                    self.otel_context = None;
+            END_CONTEXT_CODE => {
+                match self.otel_context.as_mut() {
+                    Some(_) => {
+                        self.otel_context = None;
+                    }
+                    None => {
+                        return Err(VMError::MissingSpan);
+                    }
                 }
-                None => {
-                    return Err(VMError::MissingSpan);
-                }
-            },
-            Instruction::CheckInterrupt => {
+                self.ip += 1;
+            }
+            CHECK_INTERRUPT_CODE => {
                 self.handle_remote_call().await?;
             }
-            Instruction::Call(label) => {
+            CALL_CODE => {
+                let (_start, end, label_len) = self.extract_length();
+                let label = &self.code[end..end + label_len];
+                let label = String::from_utf8(label.to_vec()).unwrap();
                 self.handle_local_call(label).await?;
             }
-            Instruction::Ret => {
+            RET_CODE => {
                 self.ip = self.return_addresses.pop().unwrap();
+            }
+            _ => {
+                return Err(VMError::InvalidInstruction(instruction));
             }
         }
         Ok(())
     }
 
     fn find_current_function_name(&self) -> Option<String> {
-        let mut function_name = None;
         for i in (0..self.ip).rev() {
-            if matches!(self.code[i], Instruction::Label(_)) {
-                match self.code[i].clone() {
-                    Instruction::Label(label) => function_name = Some(label),
-                    _ => {}
-                }
-                break;
+            if self.label_index_map.contains_key(&i) {
+                return Some(self.label_index_map.get(&i).unwrap().clone());
             }
         }
-        function_name
+
+        None
     }
 }
 
@@ -515,6 +637,224 @@ mod tests {
         }
         "
         .to_string()
+    }
+
+    #[tokio::test]
+    async fn test_push_string() {
+        let code = vec![
+            Instruction::Push(StackValue::String("Hello, world!".to_string())),
+            Instruction::Stdout,
+        ];
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(2);
+        match vm.run().await {
+            Ok(_) => {
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stdout("Hello, world!".to_string())
+                );
+            }
+            Err(_e) => {
+                assert!(false, "VM should have finished execution");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_push_int() {
+        let code = vec![
+            Instruction::Push(StackValue::Int(12345)),
+            Instruction::Stdout,
+        ];
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(2);
+        match vm.run().await {
+            Ok(_) => {
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(print_messages, PrintMessage::Stdout("12345".to_string()));
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_jmp_if_zero() {
+        let code = vec![
+            Instruction::Push(StackValue::String("Unexpected Code Reached".to_string())),
+            Instruction::Push(StackValue::Int(0)),
+            Instruction::JmpIfZero("label".to_string()),
+            Instruction::Stdout, //We're trying to skip this
+            Instruction::Label("label".to_string()),
+        ];
+        let (print_tx, print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(4);
+        match vm.run().await {
+            Ok(_) => {
+                assert_eq!(print_rx.len(), 0); //We should have skipped the stdout
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sleep() {
+        let sleep_duration = 100;
+        let code = vec![Instruction::Sleep(sleep_duration)];
+        let (print_tx, print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(1);
+        let start = std::time::Instant::now();
+        match vm.run().await {
+            Ok(_) => {
+                let elapsed = start.elapsed();
+                assert_eq!(print_rx.len(), 0); //We should have skipped the stdout
+                assert!(elapsed.as_millis() >= sleep_duration as u128);
+                assert!(elapsed.as_millis() <= (sleep_duration + 100) as u128);
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_store_var() {
+        let code = vec![
+            Instruction::StoreVar("test".to_string(), "test".to_string()),
+            Instruction::LoadVar("test".to_string()),
+            Instruction::Stdout,
+        ];
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(3);
+        match vm.run().await {
+            Ok(_) => {
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(print_messages, PrintMessage::Stdout("test".to_string()));
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dup() {
+        let code = vec![
+            Instruction::Push(StackValue::String("Hello, world!".to_string())),
+            Instruction::Dup,
+            Instruction::Stdout,
+            Instruction::Stdout,
+        ];
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(5);
+        match vm.run().await {
+            Ok(_) => {
+                assert_eq!(print_rx.len(), 2);
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_jump() {
+        let code = vec![
+            Instruction::Push(StackValue::String("Hello, world!".to_string())),
+            Instruction::Jump("label".to_string()),
+            Instruction::Stdout, //We're trying to skip this
+            Instruction::Label("label".to_string()),
+        ];
+        let (print_tx, print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(3);
+        match vm.run().await {
+            Ok(_) => {
+                assert_eq!(print_rx.len(), 0);
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_printf() {
+        let code = vec![
+            Instruction::Push(StackValue::String("Hello, %s!".to_string())),
+            Instruction::Push(StackValue::String("world".to_string())),
+            Instruction::Printf,
+            Instruction::Stdout,
+        ];
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(4);
+        match vm.run().await {
+            Ok(_) => {
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stdout("Hello, world!".to_string())
+                );
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_printf_with_int() {
+        let code = vec![
+            Instruction::Push(StackValue::String("Hello, %d!".to_string())),
+            Instruction::Push(StackValue::Int(12345)),
+            Instruction::Printf,
+            Instruction::Stdout,
+        ];
+        let (print_tx, mut print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(4);
+        match vm.run().await {
+            Ok(_) => {
+                let print_messages = print_rx.recv().await.unwrap();
+                assert_eq!(
+                    print_messages,
+                    PrintMessage::Stdout("Hello, 12345!".to_string())
+                );
+            }
+            Err(e) => {
+                eprintln!("VM should have finished execution: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_printf_with_invalid_template() {
+        let code = vec![
+            Instruction::Push(StackValue::String("Hello, %!".to_string())),
+            Instruction::Push(StackValue::Int(12345)),
+            Instruction::Printf,
+            Instruction::Stdout,
+        ];
+        let (print_tx, print_rx) = mpsc::channel(10);
+        let mut vm = VM::new(code.clone(), "test", print_tx).with_max_execution_counter(4);
+        match vm.run().await {
+            Ok(_) => {
+                assert!(false, "VM should have reached max execution counter");
+            }
+            Err(e) => {
+                assert_eq!(e, VMError::InvalidTemplate("Hello, %!".to_string()));
+            }
+        }
     }
 
     #[tokio::test]

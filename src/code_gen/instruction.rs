@@ -85,6 +85,32 @@ pub const CHECK_INTERRUPT_CODE: u8 = 0x12;
 pub const CALL_CODE: u8 = 0x13;
 pub const RET_CODE: u8 = 0x14;
 
+pub fn code_to_name(code: u8) -> String {
+    match code {
+        PUSH_STRING_CODE => "PushString".to_string(),
+        PUSH_INT_CODE => "PushInt".to_string(),
+        POP_CODE => "Pop".to_string(),
+        DEC_CODE => "Dec".to_string(),
+        JMP_IF_ZERO_CODE => "JmpIfZero".to_string(),
+        LABEL_CODE => "Label".to_string(),
+        STDOUT_CODE => "Stdout".to_string(),
+        STDERR_CODE => "Stderr".to_string(),
+        SLEEP_CODE => "Sleep".to_string(),
+        STORE_VAR_CODE => "StoreVar".to_string(),
+        LOAD_VAR_CODE => "LoadVar".to_string(),
+        DUP_CODE => "Dup".to_string(),
+        JUMP_CODE => "Jump".to_string(),
+        PRINTF_CODE => "Printf".to_string(),
+        REMOTE_CALL_CODE => "RemoteCall".to_string(),
+        START_CONTEXT_CODE => "StartContext".to_string(),
+        END_CONTEXT_CODE => "EndContext".to_string(),
+        CHECK_INTERRUPT_CODE => "CheckInterrupt".to_string(),
+        CALL_CODE => "Call".to_string(),
+        RET_CODE => "Ret".to_string(),
+        _ => "Unknown".to_string(),
+    }
+}
+
 impl Instruction {
     pub fn code(&self) -> u8 {
         match self {

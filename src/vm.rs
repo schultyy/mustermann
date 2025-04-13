@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use opentelemetry::metrics::Counter;
+use opentelemetry::metrics::Gauge;
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::propagation::TextMapPropagator;
 use opentelemetry::trace::{TraceContextExt, TracerProvider};
@@ -254,7 +255,9 @@ impl VM {
         self
     }
 
-    fn build_counters(&self) -> Result<(Counter<u64>, Counter<u64>), VMError> {
+    fn build_counters(
+        &self,
+    ) -> Result<(Counter<u64>, Counter<u64>, Gauge<u64>, Gauge<u64>), VMError> {
         let remote_invocation_counter = self
             .meter_provider
             .meter("remote_invocation_counter")
@@ -269,7 +272,30 @@ impl VM {
             .build()
             .to_owned();
 
-        Ok((remote_invocation_counter, local_invocation_counter))
+        let instruction_duration = self
+            .meter_provider
+            .meter("instruction_duration")
+            .u64_gauge("instruction_duration")
+            .with_unit("ms")
+            .with_description("The duration of executing an instruction in milliseconds")
+            .build()
+            .to_owned();
+
+        let remote_call_duration = self
+            .meter_provider
+            .meter("remote_call_duration")
+            .u64_gauge("remote_call_duration")
+            .with_unit("ms")
+            .with_description("The duration of a remote call in milliseconds")
+            .build()
+            .to_owned();
+
+        Ok((
+            remote_invocation_counter,
+            local_invocation_counter,
+            instruction_duration,
+            remote_call_duration,
+        ))
     }
 
     pub async fn run(&mut self) -> Result<(), VMError> {
@@ -330,10 +356,16 @@ impl VM {
 
     async fn execute_instruction(
         &mut self,
-        counters: (Counter<u64>, Counter<u64>),
+        counters: (Counter<u64>, Counter<u64>, Gauge<u64>, Gauge<u64>),
     ) -> Result<(), VMError> {
         let instruction = self.code[self.ip];
-        let (remote_invocation_counter, local_invocation_counter) = counters;
+        let (
+            remote_invocation_counter,
+            local_invocation_counter,
+            instruction_duration,
+            remote_call_duration,
+        ) = counters;
+        let start = std::time::Instant::now();
         match instruction {
             PUSH_STRING_CODE => {
                 let (_start, end, str_len) = self.extract_length();
@@ -514,6 +546,7 @@ impl VM {
                 self.ip += 1;
             }
             REMOTE_CALL_CODE => {
+                let start = std::time::Instant::now();
                 let remote_call_tx = self
                     .remote_call_tx
                     .as_ref()
@@ -576,6 +609,15 @@ impl VM {
                     ],
                 );
 
+                let duration = start.elapsed();
+                let duration_ms = duration.as_millis() as u64;
+                remote_call_duration.record(
+                    duration_ms,
+                    &[
+                        KeyValue::new("service", self.service_name.clone()),
+                        KeyValue::new("method", remote_method.to_string().clone()),
+                    ],
+                );
                 if let Some(cx) = cx {
                     cx.span()
                         .set_attributes(vec![KeyValue::new("response", "OK")]);
@@ -628,6 +670,15 @@ impl VM {
                 return Err(VMError::InvalidInstruction(instruction));
             }
         }
+        let duration = start.elapsed();
+        let duration_ms = duration.as_millis() as u64;
+        instruction_duration.record(
+            duration_ms,
+            &[KeyValue::new(
+                "instruction",
+                crate::code_gen::instruction::code_to_name(instruction),
+            )],
+        );
         Ok(())
     }
 

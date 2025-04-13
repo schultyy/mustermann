@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use opentelemetry::metrics::Counter;
+use opentelemetry::metrics::MeterProvider;
 use opentelemetry::propagation::TextMapPropagator;
 use opentelemetry::trace::{TraceContextExt, TracerProvider};
 use opentelemetry::{global, KeyValue};
@@ -8,6 +10,8 @@ use opentelemetry::{
     Context,
 };
 use opentelemetry_otlp::{WithExportConfig, WithTonicConfig};
+use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
@@ -105,6 +109,40 @@ pub fn setup_tracer(
     Ok(provider)
 }
 
+pub(crate) fn init_meter_provider(
+    endpoint: Option<&str>,
+    service_name: &str,
+) -> Result<opentelemetry_sdk::metrics::SdkMeterProvider, opentelemetry_otlp::ExporterBuildError> {
+    let provider = if let Some(endpoint) = endpoint {
+        let exporter = opentelemetry_otlp::MetricExporter::builder()
+            .with_temporality(Temporality::Delta)
+            .with_tonic()
+            .with_endpoint(endpoint.to_string())
+            .build()?;
+        let resource = Resource::builder()
+            .with_service_name(service_name.to_string())
+            .build();
+
+        SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter)
+            .with_resource(resource)
+            .build()
+    } else {
+        let exporter = opentelemetry_stdout::MetricExporter::default();
+
+        let resource = Resource::builder()
+            .with_service_name(service_name.to_string())
+            .build();
+
+        SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter)
+            .with_resource(resource)
+            .build()
+    };
+
+    Ok(provider)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrintMessage {
     Stdout(String),
@@ -130,6 +168,7 @@ pub struct VM {
     remote_call_limit: usize,
     service_name: String,
     tracer: Option<SdkTracerProvider>,
+    meter_provider: SdkMeterProvider,
     otel_context: Option<opentelemetry::Context>,
 }
 
@@ -161,7 +200,9 @@ impl VM {
         service_name: &str,
         print_tx: mpsc::Sender<PrintMessage>,
     ) -> Self {
+        let service_name = service_name.to_string();
         let (code, label_jump_map, label_index_map) = generate_bytecode(code);
+
         Self {
             code,
             label_jump_map,
@@ -179,6 +220,7 @@ impl VM {
             service_name: service_name.to_string(),
             tracer: None,
             otel_context: None,
+            meter_provider: init_meter_provider(None, &service_name).unwrap(),
         }
     }
 
@@ -207,13 +249,38 @@ impl VM {
         self
     }
 
+    pub fn with_meter_provider(mut self, meter_provider: SdkMeterProvider) -> Self {
+        self.meter_provider = meter_provider;
+        self
+    }
+
+    fn build_counters(&self) -> Result<(Counter<u64>, Counter<u64>), VMError> {
+        let remote_invocation_counter = self
+            .meter_provider
+            .meter("remote_invocation_counter")
+            .u64_counter("remote_invocation_counter")
+            .build()
+            .to_owned();
+
+        let local_invocation_counter = self
+            .meter_provider
+            .meter("local_invocation_counter")
+            .u64_counter("local_invocation_counter")
+            .build()
+            .to_owned();
+
+        Ok((remote_invocation_counter, local_invocation_counter))
+    }
+
     pub async fn run(&mut self) -> Result<(), VMError> {
         let mut execution_counter = 0;
+        let counters = self.build_counters()?;
+
         while self.ip < self.code.len() {
             if self.ip >= self.code.len() {
                 return Err(VMError::IPOutOfBounds(self.ip, self.code.len()));
             }
-            self.execute_instruction().await?;
+            self.execute_instruction(counters.clone()).await?;
             execution_counter += 1;
             if let Some(max_execution_counter) = self.max_execution_counter {
                 if execution_counter > max_execution_counter {
@@ -261,8 +328,12 @@ impl VM {
         self.stack.last_mut().ok_or(VMError::MissingStackFrame)
     }
 
-    async fn execute_instruction(&mut self) -> Result<(), VMError> {
+    async fn execute_instruction(
+        &mut self,
+        counters: (Counter<u64>, Counter<u64>),
+    ) -> Result<(), VMError> {
         let instruction = self.code[self.ip];
+        let (remote_invocation_counter, local_invocation_counter) = counters;
         match instruction {
             PUSH_STRING_CODE => {
                 let (_start, end, str_len) = self.extract_length();
@@ -497,6 +568,14 @@ impl VM {
                     .await
                     .map_err(|e| VMError::RemoteCallError(e.to_string()))?;
 
+                remote_invocation_counter.add(
+                    1,
+                    &[
+                        KeyValue::new("service", self.service_name.clone()),
+                        KeyValue::new("method", remote_method.to_string().clone()),
+                    ],
+                );
+
                 if let Some(cx) = cx {
                     cx.span()
                         .set_attributes(vec![KeyValue::new("response", "OK")]);
@@ -537,7 +616,9 @@ impl VM {
                 let (_start, end, label_len) = self.extract_length();
                 let label = &self.code[end..end + label_len];
                 let label = String::from_utf8(label.to_vec()).unwrap();
-                self.handle_local_call(label).await?;
+                self.handle_local_call(label.clone()).await?;
+                local_invocation_counter
+                    .add(1, &[KeyValue::new("method", label.to_string().clone())]);
             }
             RET_CODE => {
                 self.ip = self.return_addresses.pop().unwrap();

@@ -130,11 +130,14 @@ async fn execute_service(
     let tracer = vm::setup_tracer(&otel_endpoint, &service_name)
         .map_err(|e| RuntimeError::InitTraceError(e))?;
 
+    let meter_provider = vm::init_meter_provider(Some(&otel_endpoint), &service_name)
+        .map_err(|e| RuntimeError::InitMeterError(e))?;
+
     let mut vm = vm::VM::new(service_code.clone(), &service_name, print_tx)
         .with_remote_call_tx(coordinator.get_main_tx().clone())
         .with_remote_call_rx(remote_call_rx)
-        .with_tracer(tracer.clone());
-
+        .with_tracer(tracer.clone())
+        .with_meter_provider(meter_provider);
     if let Some(remote_call_limit) = args.remote_call_limit {
         vm = vm.with_custom_remote_call_limit(remote_call_limit);
     }

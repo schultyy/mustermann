@@ -7,6 +7,7 @@ pub enum RuntimeError {
     VMError(vm::VMError),
     ServiceError(JoinError),
     InitTraceError(opentelemetry_otlp::ExporterBuildError),
+    InitMeterError(opentelemetry_otlp::ExporterBuildError),
 }
 
 impl std::error::Error for RuntimeError {}
@@ -17,6 +18,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::VMError(e) => write!(f, "VM error: {}", e),
             RuntimeError::ServiceError(e) => write!(f, "Service error: {}", e),
             RuntimeError::InitTraceError(e) => write!(f, "Init trace error: {}", e),
+            RuntimeError::InitMeterError(e) => write!(f, "Init meter error: {}", e),
         }
     }
 }
